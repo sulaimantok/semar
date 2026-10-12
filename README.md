@@ -15,6 +15,7 @@
 | Driver contract | `internal/driver/contract` | Provider-neutral model + read-only `CloudDriver` interface |
 | Contract test suite | `internal/driver/contracttest` | Run by every driver (Fake on each PR, lab nightly) |
 | Fake Driver | `internal/driver/fake` | Deterministic inventory + fault injection (latency, error rate, fail-next) |
+| Web UI | `web/` | React + Vite + TypeScript + Tailwind; module-based layout, API types generated from the spec (see `web/README.md`) |
 | Lite profile | `deploy/compose/` | PostgreSQL + Temporal + UI + SEMAR (development only) |
 | ADRs & spikes | `docs/adr/`, `docs/spikes/` | ADR-0001 … ADR-0007, spike S4 |
 
@@ -30,6 +31,8 @@ make build     # bin/semar-api, bin/semar-worker
 make run-api   # listens on :8080
 make image     # multi-arch image for linux/amd64 + linux/arm64
 ```
+
+Web UI (Node 24+): `cd web && npm ci && npm run dev`, then open http://localhost:5173 (proxies the API on `:8080`).
 
 ### Lite profile (local stack)
 

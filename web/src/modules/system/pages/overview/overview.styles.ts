@@ -1,0 +1,21 @@
+export const overviewStyles = {
+  page: "flex max-w-5xl flex-col gap-8",
+  header: "flex flex-col gap-1",
+  title: "text-2xl font-semibold tracking-tight",
+  subtitle: "text-sm text-muted",
+  grid: "grid gap-4 sm:grid-cols-2",
+  card: "flex flex-col gap-3 rounded-xl border border-border bg-panel p-5",
+  cardTitle: "text-xs font-medium uppercase tracking-wider text-muted",
+  status: "flex items-center gap-2 text-lg font-medium",
+  dot: "size-2.5 rounded-full",
+  dotOk: "bg-ok",
+  dotWarn: "bg-warn",
+  dotDanger: "bg-danger",
+  dotUnknown: "bg-border",
+  hint: "text-sm text-muted",
+  facts: "grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm",
+  factLabel: "text-muted",
+  factValue: "truncate font-mono",
+  empty:
+    "rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted",
+} as const;

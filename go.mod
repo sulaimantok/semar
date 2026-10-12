@@ -2,6 +2,9 @@ module github.com/sulaimantok/semar
 
 go 1.26.0
 
+// web/ is the frontend; its node_modules can contain stray Go packages.
+ignore ./web
+
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 
 require (
