@@ -1,4 +1,7 @@
 // Command semar-api serves the SEMAR HTTP API.
+//
+//	semar-api                serve the API
+//	semar-api audit-verify   verify the audit log hash chain and exit
 package main
 
 import (
@@ -13,13 +16,20 @@ import (
 	"time"
 
 	"github.com/sulaimantok/semar/internal/api"
+	"github.com/sulaimantok/semar/internal/auth"
 	"github.com/sulaimantok/semar/internal/config"
 	"github.com/sulaimantok/semar/internal/store"
 	"github.com/sulaimantok/semar/internal/version"
 )
 
 func main() {
-	if err := run(); err != nil {
+	var err error
+	if len(os.Args) > 1 && os.Args[1] == "audit-verify" {
+		err = auditVerify()
+	} else {
+		err = run()
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "semar-api:", err)
 		os.Exit(1)
 	}
@@ -46,12 +56,25 @@ func run() error {
 	}
 	defer st.Close()
 
+	if cfg.BootstrapAdminPassword != "" {
+		if err := bootstrapAdmin(startCtx, st, cfg.BootstrapAdminPassword, log); err != nil {
+			return err
+		}
+	}
+	if !cfg.CookieSecure {
+		log.Warn("session cookie is not Secure; use only on localhost over plain HTTP")
+	}
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: api.NewHandler(api.Options{
-			Logger:   log,
-			Checks:   map[string]api.ReadinessCheck{"database": st.Ping},
-			Settings: st,
+			Logger:       log,
+			Checks:       map[string]api.ReadinessCheck{"database": st.Ping},
+			Settings:     st,
+			Auth:         st,
+			Audit:        st,
+			SessionTTL:   cfg.SessionTTL,
+			CookieSecure: cfg.CookieSecure,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -83,4 +106,48 @@ func run() error {
 		return fmt.Errorf("shutdown: %w", err)
 	}
 	return <-errc
+}
+
+// bootstrapAdmin creates the first admin when the database has no users.
+func bootstrapAdmin(ctx context.Context, st *store.Store, password string, log *slog.Logger) error {
+	hash, err := auth.HashPassword(password, auth.DefaultArgon2)
+	if err != nil {
+		return fmt.Errorf("SEMAR_BOOTSTRAP_ADMIN_PASSWORD: %w", err)
+	}
+	created, err := st.EnsureBootstrapAdmin(ctx, "admin", hash)
+	if err != nil {
+		return fmt.Errorf("bootstrap admin: %w", err)
+	}
+	if !created {
+		log.Info("users exist; SEMAR_BOOTSTRAP_ADMIN_PASSWORD ignored and can be removed")
+		return nil
+	}
+	if _, err := st.AppendAudit(ctx, store.AuditEvent{
+		Actor: "system", Action: "user.bootstrap_admin", Target: "admin", Outcome: store.AuditSuccess,
+	}); err != nil {
+		return fmt.Errorf("audit bootstrap admin: %w", err)
+	}
+	log.Warn("bootstrap admin user created; remove SEMAR_BOOTSTRAP_ADMIN_PASSWORD from the environment")
+	return nil
+}
+
+// auditVerify checks the audit hash chain; it exits non-zero if broken.
+func auditVerify() error {
+	cfg, err := config.LoadAPI(os.Getenv)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	st, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	n, err := st.VerifyAuditChain(ctx)
+	if err != nil {
+		return fmt.Errorf("audit chain verification failed after %d valid events: %w", n, err)
+	}
+	fmt.Printf("audit chain OK: %d events verified\n", n)
+	return nil
 }

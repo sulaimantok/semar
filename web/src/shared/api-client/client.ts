@@ -9,6 +9,9 @@ import type { paths } from "./schema.gen";
  */
 export const apiClient = createClient<paths>({
   baseUrl: globalThis.location?.origin ?? "",
+  // semar-api rejects state-changing requests without this header (CSRF).
+  headers: { "X-Requested-By": "semar-web" },
+  credentials: "same-origin",
   // Resolve fetch per request (not once at import) so it can be replaced in tests.
   fetch: (request) => globalThis.fetch(request),
 });

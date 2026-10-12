@@ -12,3 +12,9 @@ func (s *Store) CountCredentialsContaining(ctx context.Context, needle []byte) (
 		   OR position($1::bytea IN convert_to(owner || scope, 'UTF8')) > 0`, needle).Scan(&n)
 	return n, err
 }
+
+// ExecForTest runs raw SQL. Test-only: simulates tampering and direct access.
+func (s *Store) ExecForTest(ctx context.Context, sql string, args ...any) error {
+	_, err := s.pool.Exec(ctx, sql, args...)
+	return err
+}

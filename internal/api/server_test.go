@@ -92,7 +92,7 @@ func TestReadyzProblemCarriesRequestID(t *testing.T) {
 }
 
 func TestWrongMethodIsProblemJSON(t *testing.T) {
-	rec := do(t, newTestHandler(nil), http.MethodPost, "/api/v1/version", nil)
+	rec := do(t, newTestHandler(nil), http.MethodPost, "/api/v1/version", http.Header{CSRFHeader: {"test"}})
 	if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 404 or 405", rec.Code)
 	}

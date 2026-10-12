@@ -51,6 +51,18 @@ make lite-logs                                       # follow the worker
 
 Ports are bound to `127.0.0.1`: API `8080`, Temporal `7233`, Temporal UI `8233`, PostgreSQL `5432`. See [spike S4](docs/spikes/s4-temporal-lite.md) for measurements.
 
+### Authentication and audit
+
+Sign in with `POST /api/v1/auth/login`; the API sets an HttpOnly, SameSite=Strict session cookie. State-changing requests must carry an `X-Requested-By` header (CSRF protection). Every operation in the spec has an access policy (public, authenticated or admin); operations without one are refused.
+
+Logins, logouts and every Settings change are written to an append-only, hash-chained audit log. Verify it with:
+
+```bash
+semar-api audit-verify      # uses SEMAR_DATABASE_URL; exits non-zero if the chain is broken
+```
+
+In production run semar-api as a non-superuser database role: the append-only guarantee relies on triggers that a superuser could disable.
+
 ### Configuration
 
 `semar-api` is configured through environment variables:
@@ -59,6 +71,9 @@ Ports are bound to `127.0.0.1`: API `8080`, Temporal `7233`, Temporal UI `8233`,
 |---|---|---|
 | `SEMAR_DATABASE_URL` | — (required) | PostgreSQL URL, e.g. `postgres://semar:…@localhost:5432/semar?sslmode=disable` |
 | `SEMAR_MIGRATE_ON_START` | `true` | Apply pending migrations before serving (safe with several replicas) |
+| `SEMAR_BOOTSTRAP_ADMIN_PASSWORD` | — | Creates the `admin` user (global Admin) on first start when no user exists; remove afterwards |
+| `SEMAR_SESSION_TTL` | `12h` | Login session lifetime (1m–168h) |
+| `SEMAR_COOKIE_SECURE` | `true` | Secure flag of the session cookie; set `false` only for plain HTTP on localhost |
 | `SEMAR_HTTP_ADDR` | `:8080` | Listen address |
 | `SEMAR_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `SEMAR_SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown limit |

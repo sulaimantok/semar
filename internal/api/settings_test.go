@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -10,29 +11,88 @@ import (
 	"testing"
 
 	"github.com/sulaimantok/semar/internal/api/gen"
+	"github.com/sulaimantok/semar/internal/auth"
+	"github.com/sulaimantok/semar/internal/store"
 	"github.com/sulaimantok/semar/internal/store/storetest"
 )
 
-// settingsAPI is an HTTP handler backed by a throwaway database.
+// fastArgon2 keeps password hashing cheap in tests.
+var fastArgon2 = auth.Argon2Params{MemoryKiB: 1024, Time: 1, Threads: 1}
+
+const adminPassword = "admin-password-for-tests"
+
+// settingsAPI is an HTTP handler backed by a throwaway database, acting as
+// one signed-in browser session.
 type settingsAPI struct {
-	t *testing.T
-	h http.Handler
+	t      *testing.T
+	h      http.Handler
+	st     *store.Store
+	cookie *http.Cookie
 }
 
-func newSettingsAPI(t *testing.T) *settingsAPI {
+// newAnonymousAPI returns an API client with a bootstrapped admin account
+// but no session.
+func newAnonymousAPI(t *testing.T) *settingsAPI {
 	t.Helper()
 	st := storetest.New(t)
-	return &settingsAPI{t: t, h: NewHandler(Options{
+	hash, err := auth.HashPassword(adminPassword, fastArgon2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnsureBootstrapAdmin(context.Background(), "admin", hash); err != nil {
+		t.Fatal(err)
+	}
+	return &settingsAPI{t: t, st: st, h: NewHandler(Options{
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Settings: st,
+		Auth:     st,
+		Audit:    st,
 	})}
 }
 
+// newSettingsAPI returns a client signed in as the bootstrap admin.
+func newSettingsAPI(t *testing.T) *settingsAPI {
+	t.Helper()
+	a := newAnonymousAPI(t)
+	a.login("admin", adminPassword)
+	return a
+}
+
+// login signs in and keeps the session cookie for later calls.
+func (a *settingsAPI) login(username, password string) *httptest.ResponseRecorder {
+	a.t.Helper()
+	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	rec := a.call("POST", "/api/v1/auth/login", string(body))
+	if rec.Code == http.StatusOK {
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == auth.SessionCookie {
+				a.cookie = c
+			}
+		}
+	}
+	return rec
+}
+
+// call sends a request as the browser would: with the session cookie and
+// the CSRF header on unsafe methods.
 func (a *settingsAPI) call(method, path, body string) *httptest.ResponseRecorder {
+	a.t.Helper()
+	return a.callWith(method, path, body, http.Header{CSRFHeader: {"semar-web"}})
+}
+
+func (a *settingsAPI) callWith(method, path, body string, header http.Header) *httptest.ResponseRecorder {
 	a.t.Helper()
 	req := httptest.NewRequestWithContext(a.t.Context(), method, path, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, vs := range header {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
+	if a.cookie != nil {
+		req.AddCookie(a.cookie)
 	}
 	rec := httptest.NewRecorder()
 	a.h.ServeHTTP(rec, req)
@@ -155,10 +215,24 @@ func TestSettingsProjectMappings(t *testing.T) {
 	}
 }
 
-func TestSettingsWithoutStoreIs503(t *testing.T) {
+func TestSettingsRequireAuthentication(t *testing.T) {
 	rec := do(t, newTestHandler(nil), http.MethodGet, "/api/v1/sites", nil)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 	decodeProblem(t, rec)
+}
+
+// auditActions returns "actor action target outcome" for every audit event.
+func (a *settingsAPI) auditActions(t *testing.T) []string {
+	t.Helper()
+	events, err := a.st.ListAuditEvents(context.Background(), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		out = append(out, e.Actor+" "+e.Action+" "+e.Target+" "+string(e.Outcome))
+	}
+	return out
 }
