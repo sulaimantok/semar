@@ -26,6 +26,8 @@ type Options struct {
 	Checks map[string]ReadinessCheck
 	// CheckTimeout bounds each readiness check. Defaults to 2s.
 	CheckTimeout time.Duration
+	// Settings backs the Settings endpoints (sites, projects, providers).
+	Settings SettingsStore
 }
 
 // NewHandler returns the root HTTP handler with middleware applied.

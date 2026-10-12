@@ -49,8 +49,9 @@ func run() error {
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: api.NewHandler(api.Options{
-			Logger: log,
-			Checks: map[string]api.ReadinessCheck{"database": st.Ping},
+			Logger:   log,
+			Checks:   map[string]api.ReadinessCheck{"database": st.Ping},
+			Settings: st,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,

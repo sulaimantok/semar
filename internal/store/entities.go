@@ -56,6 +56,14 @@ func (s *Store) CreateProject(ctx context.Context, p model.Project) (model.Proje
 	return p, mapErr(err)
 }
 
+// GetProject returns one project.
+func (s *Store) GetProject(ctx context.Context, id string) (model.Project, error) {
+	var p model.Project
+	err := s.pool.QueryRow(ctx, `SELECT id, name, created_at, updated_at FROM projects WHERE id = $1`, id).
+		Scan(&p.ID, &p.Name, &p.CreatedAt, &p.UpdatedAt)
+	return p, mapErr(err)
+}
+
 // ListProjects returns all projects ordered by ID.
 func (s *Store) ListProjects(ctx context.Context) ([]model.Project, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, name, created_at, updated_at FROM projects ORDER BY id`)
@@ -154,6 +162,21 @@ func (s *Store) CreateProjectMapping(ctx context.Context, m model.ProjectMapping
 		VALUES ($1, $2, $3) RETURNING id, created_at`,
 		m.ProjectID, m.ProviderID, m.ExternalScope).Scan(&m.ID, &m.CreatedAt)
 	return m, mapErr(err)
+}
+
+// ListProjectMappings returns a project's mappings ordered by provider and scope.
+func (s *Store) ListProjectMappings(ctx context.Context, projectID string) ([]model.ProjectMapping, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, project_id, provider_id, external_scope, created_at FROM project_mappings
+		WHERE project_id = $1 ORDER BY provider_id, external_scope`, projectID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (model.ProjectMapping, error) {
+		var m model.ProjectMapping
+		err := r.Scan(&m.ID, &m.ProjectID, &m.ProviderID, &m.ExternalScope, &m.CreatedAt)
+		return m, err
+	})
 }
 
 // ProjectForScope returns the project an external scope maps to, or

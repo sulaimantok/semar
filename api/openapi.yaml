@@ -50,7 +50,183 @@ paths:
                 $ref: "#/components/schemas/VersionInfo"
         default:
           $ref: "#/components/responses/Problem"
+  /api/v1/sites:
+    get:
+      tags: [settings]
+      summary: List sites
+      operationId: listSites
+      responses:
+        "200":
+          description: All sites
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteList"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      tags: [settings]
+      summary: Create a site
+      operationId: createSite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+        default:
+          $ref: "#/components/responses/Problem"
+  /api/v1/projects:
+    get:
+      tags: [settings]
+      summary: List projects
+      operationId: listProjects
+      responses:
+        "200":
+          description: All projects
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectList"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      tags: [settings]
+      summary: Create a project
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        default:
+          $ref: "#/components/responses/Problem"
+  /api/v1/projects/{projectId}/mappings:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [settings]
+      summary: List the provider scopes mapped to a project
+      operationId: listProjectMappings
+      responses:
+        "200":
+          description: Mappings of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectMappingList"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      tags: [settings]
+      summary: Map a provider scope (OpenStack project, PVE pool) to the project
+      description: Each external scope of a provider maps to at most one project (409 otherwise).
+      operationId: createProjectMapping
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectMappingCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectMapping"
+        default:
+          $ref: "#/components/responses/Problem"
+  /api/v1/providers:
+    get:
+      tags: [settings]
+      summary: List active providers
+      operationId: listProviders
+      responses:
+        "200":
+          description: Active providers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderList"
+        default:
+          $ref: "#/components/responses/Problem"
+    post:
+      tags: [settings]
+      summary: Register a provider
+      description: |
+        The server derives the provider fingerprint; registering the same cloud
+        twice while it is active fails with 409.
+      operationId: createProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderCreate"
+      responses:
+        "201":
+          description: Registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Provider"
+        default:
+          $ref: "#/components/responses/Problem"
+  /api/v1/providers/{providerId}:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    get:
+      tags: [settings]
+      summary: Get a provider
+      operationId: getProvider
+      responses:
+        "200":
+          description: The provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Provider"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      tags: [settings]
+      summary: Remove a provider (soft delete; history is kept)
+      operationId: deleteProvider
+      responses:
+        "204":
+          description: Removed
+        default:
+          $ref: "#/components/responses/Problem"
 components:
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/EntityId"
+    ProviderId:
+      name: providerId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/EntityId"
   responses:
     Problem:
       description: Error in RFC 9457 problem details format
@@ -59,6 +235,175 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    EntityId:
+      type: string
+      pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+      examples: [os-jkt]
+    Site:
+      type: object
+      required: [id, name, labels, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/EntityId"
+        name:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SiteCreate:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          $ref: "#/components/schemas/EntityId"
+        name:
+          type: string
+          minLength: 1
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+    SiteList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Site"
+    Project:
+      type: object
+      required: [id, name, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/EntityId"
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProjectCreate:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          $ref: "#/components/schemas/EntityId"
+        name:
+          type: string
+          minLength: 1
+    ProjectList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Project"
+    ProjectMapping:
+      type: object
+      required: [id, projectId, providerId, externalScope, createdAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        projectId:
+          $ref: "#/components/schemas/EntityId"
+        providerId:
+          $ref: "#/components/schemas/EntityId"
+        externalScope:
+          type: string
+          description: OpenStack project ID, "pool:<name>" for a PVE pool, …
+        createdAt:
+          type: string
+          format: date-time
+    ProjectMappingCreate:
+      type: object
+      required: [providerId, externalScope]
+      properties:
+        providerId:
+          $ref: "#/components/schemas/EntityId"
+        externalScope:
+          type: string
+          minLength: 1
+    ProjectMappingList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectMapping"
+    ProviderType:
+      type: string
+      enum: [openstack, proxmox, fake]
+    Provider:
+      type: object
+      required: [id, type, name, endpoints, regionName, fingerprint, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/EntityId"
+        type:
+          $ref: "#/components/schemas/ProviderType"
+        name:
+          type: string
+        siteId:
+          $ref: "#/components/schemas/EntityId"
+        endpoints:
+          type: array
+          items:
+            type: string
+        regionName:
+          type: string
+        fingerprint:
+          type: string
+          description: Stable identity of the backing cloud, derived by the server.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProviderCreate:
+      type: object
+      required: [id, type, name, endpoints]
+      properties:
+        id:
+          $ref: "#/components/schemas/EntityId"
+        type:
+          $ref: "#/components/schemas/ProviderType"
+        name:
+          type: string
+          minLength: 1
+        siteId:
+          $ref: "#/components/schemas/EntityId"
+        endpoints:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uri
+          description: Keystone URL, or the API URLs of every node of one PVE cluster.
+        regionName:
+          type: string
+          description: OpenStack region; empty for Proxmox.
+    ProviderList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Provider"
     Status:
       type: object
       required: [status]

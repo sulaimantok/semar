@@ -4,8 +4,12 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/sulaimantok/semar/internal/driver/contract"
@@ -105,4 +109,28 @@ type ProjectMapping struct {
 	ProviderID    string
 	ExternalScope string
 	CreatedAt     time.Time
+}
+
+// ProviderFingerprint derives a provider's identity from its type, endpoint
+// hosts and region, so registering the same cloud twice is detected without
+// trusting client input. Endpoint order, scheme, case and trailing slashes do
+// not matter.
+//
+// This is a provisional identity: once real drivers exist, the fingerprint
+// returned by CloudDriver.Validate (e.g. the PVE cluster name) replaces it.
+func ProviderFingerprint(typ contract.ProviderType, endpoints []string, region string) (string, error) {
+	if len(endpoints) == 0 {
+		return "", errors.New("at least one endpoint is required")
+	}
+	hosts := make([]string, 0, len(endpoints))
+	for _, e := range endpoints {
+		u, err := url.Parse(strings.TrimSpace(e))
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return "", fmt.Errorf("endpoint %q must be an absolute http(s) URL", e)
+		}
+		hosts = append(hosts, strings.ToLower(u.Host)+strings.TrimRight(u.EscapedPath(), "/"))
+	}
+	slices.Sort(hosts)
+	hosts = slices.Compact(hosts)
+	return string(typ) + "://" + strings.Join(hosts, ",") + "#" + region, nil
 }
