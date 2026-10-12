@@ -1,21 +1,21 @@
-# ADR-0004: Secret — Envelope Encryption + SecretStore
+# ADR-0004: Secrets — Envelope Encryption + SecretStore
 
 - **Status:** Accepted
-- **Tanggal:** 2026-10-12
+- **Date:** 2026-10-12
 
-## Konteks
-SEMAR menyimpan kredensial ke seluruh cloud. Kebocoran database tidak boleh langsung membocorkan kredensial. Vault belum tersedia dan menambah beban operasional.
+## Context
+SEMAR stores credentials for every cloud. A database leak must not directly leak those credentials. Vault is not available yet and would add operational load.
 
-## Keputusan
-- Antarmuka `SecretStore` dengan implementasi awal **envelope encryption** di PostgreSQL: DEK per secret (AES-256-GCM, AAD = `table|row_id|purpose`), DEK dibungkus oleh master key (KEK).
-- Setiap baris menyimpan `kek_version` sejak Phase 1.
-- KEK disimpan **di luar database** (KMS/Vault, atau minimal host/namespace berbeda dari PostgreSQL di produksi).
+## Decision
+- A `SecretStore` interface whose first implementation is **envelope encryption** in PostgreSQL: one DEK per secret (AES-256-GCM, AAD = `table|row_id|purpose`), with the DEK wrapped by a master key (KEK).
+- Every row stores `kek_version` from Phase 1.
+- The KEK is kept **outside the database** (KMS/Vault, or at minimum a different host/namespace from PostgreSQL in production).
 
-## Konsekuensi
-- Rotasi KEK = rewrap DEK secara online, tanpa mengenkripsi ulang data.
-- Implementasi Vault dapat ditambahkan di balik `SecretStore` tanpa mengubah pemanggil.
-- Backup harus mencakup KEK secara terpisah dari database; runbook rotasi wajib.
+## Consequences
+- KEK rotation = rewrapping DEKs online, without re-encrypting the data.
+- A Vault implementation can be added behind `SecretStore` without changing callers.
+- Backups must include the KEK separately from the database; a rotation runbook is required.
 
-## Alternatif
-- **Vault sejak awal:** paling kuat, tetapi menambah komponen Tier-0 sebelum MVP.
-- **Enkripsi kolom dengan satu kunci statis:** sederhana, tetapi rotasi berarti enkripsi ulang seluruh data.
+## Alternatives
+- **Vault from day one:** strongest option, but adds a Tier-0 component before the MVP.
+- **Column encryption with one static key:** simple, but rotation means re-encrypting all data.

@@ -1,27 +1,27 @@
-# ADR-0005: Kredensial Provider Dua Tingkat
+# ADR-0005: Two-Tier Provider Credentials
 
 - **Status:** Accepted
-- **Tanggal:** 2026-10-12
+- **Date:** 2026-10-12
 
-## Konteks
-Discovery inventory membutuhkan visibilitas lintas project (hypervisor, Placement, resource yang belum terpetakan), sedangkan least privilege menuntut mutasi dibatasi per Project. Application Credential OpenStack selalu ter-scope project dan melekat pada user pembuatnya; token Proxmox per pool tidak dapat melihat node/storage di luar pool.
+## Context
+Inventory discovery needs visibility across projects (hypervisors, Placement, resources not yet mapped), while least privilege requires mutations to be scoped per Project. OpenStack Application Credentials are always project-scoped and belong to the user who created them; a Proxmox token scoped to one pool cannot see nodes or storage outside that pool.
 
-## Keputusan
-Entitas `ProviderCredential` dengan `purpose`:
+## Decision
+A `ProviderCredential` entity with a `purpose`:
 
-| Purpose | OpenStack | Proxmox | Jumlah |
+| Purpose | OpenStack | Proxmox | Count |
 |---|---|---|---|
-| `discovery` | Service user, role `reader` (system/domain scope) | Token `PVEAuditor` cluster-wide | 1 per provider |
-| `mutate` | Application Credential per project | Token per pool + custom role | 1 per ProjectMapping |
-| `capi` | Application Credential khusus CAPO | Token khusus CAPMOX | 1 per Project |
-| `cluster` | Application Credential terbatas untuk CCM/CSI | Token terbatas untuk CCM/CSI | 1 per workload cluster |
+| `discovery` | Service user with the `reader` role (system/domain scope) | Cluster-wide `PVEAuditor` token | 1 per provider |
+| `mutate` | Application Credential per project | Per-pool token + custom role | 1 per ProjectMapping |
+| `capi` | Dedicated Application Credential for CAPO | Dedicated token for CAPMOX | 1 per Project |
+| `cluster` | Restricted Application Credential for CCM/CSI | Restricted token for CCM/CSI | 1 per workload cluster |
 
-## Konsekuensi
-- Discovery lengkap tanpa memberi hak mutasi luas.
-- Application Credential dibuat oleh **service user khusus**; rotasi = buat baru → tukar → hapus lama, dan harus merambat ke identity Secret CAPI.
-- Kredensial `cluster` dapat dibaca cluster-admin workload cluster, sehingga cakupannya minimal dan dirotasi saat cluster dihapus.
-- Daftar ACL Proxmox didokumentasikan di runbook dan diuji contract test mutating.
+## Consequences
+- Full discovery without granting broad mutation rights.
+- Application Credentials are created by a **dedicated service user**; rotation = create new → swap → delete old, and must propagate to CAPI identity Secrets.
+- `cluster` credentials are readable by a workload cluster's cluster-admin, so their scope is minimal and they are rotated when the cluster is deleted.
+- The Proxmox ACL list is documented in a runbook and exercised by the mutating contract tests.
 
-## Alternatif
-- **Satu kredensial admin per provider:** sederhana, tetapi kebocoran = akses penuh.
-- **Hanya kredensial per project:** tidak dapat melihat hypervisor, kapasitas, maupun resource `unassigned`.
+## Alternatives
+- **One admin credential per provider:** simple, but a leak means full access.
+- **Per-project credentials only:** cannot see hypervisors, capacity, or `unassigned` resources.

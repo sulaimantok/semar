@@ -1,21 +1,21 @@
-# ADR-0007: Objek CAPI sebagai Sumber Kebenaran State Cluster
+# ADR-0007: CAPI Objects as the Source of Truth for Cluster State
 
 - **Status:** Accepted
-- **Tanggal:** 2026-10-12
+- **Date:** 2026-10-12
 
-## Konteks
-State cluster dapat berubah di luar SEMAR (reconciliation CAPI, `kubectl` ke management cluster, remediation otomatis). Menyimpan state cluster sebagai state workflow Temporal akan menyimpang dari kenyataan.
+## Context
+Cluster state can change outside SEMAR (CAPI reconciliation, `kubectl` against the management cluster, automatic remediation). Keeping cluster state as Temporal workflow state would drift from reality.
 
-## Keputusan
-- **Objek CAPI di management cluster adalah sumber kebenaran.** Database SEMAR hanya cache.
-- Workflow Temporal hanya **mengirim perubahan topology** lalu menunggu conditions v1beta2 (`Available`, `RollingOut`, `ScalingUp/Down`, `Remediating`) dengan timeout.
-- State di UI **diturunkan dari conditions**, bukan dari state workflow.
-- VM milik cluster CAPI bersifat read-only di VM Manager.
+## Decision
+- **CAPI objects in the management cluster are the source of truth.** SEMAR's database is only a cache.
+- Temporal workflows only **submit topology changes** and then wait on v1beta2 conditions (`Available`, `RollingOut`, `ScalingUp/Down`, `Remediating`) with timeouts.
+- UI state is **derived from conditions**, not from workflow state.
+- VMs owned by a CAPI cluster are read-only in the VM Manager.
 
-## Konsekuensi
-- Tidak ada konflik antara workflow dan reconciliation.
-- SEMAR membutuhkan watch/poll terhadap objek CAPI dan pemetaan conditions → state UI.
-- Kehilangan database SEMAR tidak menghilangkan state cluster; cache dapat dibangun ulang dari management cluster.
+## Consequences
+- No conflict between workflows and reconciliation.
+- SEMAR needs to watch/poll CAPI objects and map conditions to UI state.
+- Losing SEMAR's database does not lose cluster state; the cache can be rebuilt from the management cluster.
 
-## Alternatif
-- **State machine cluster di workflow/database SEMAR:** rawan divergensi dan menduplikasi logika CAPI.
+## Alternatives
+- **A cluster state machine in SEMAR's workflows/database:** prone to drift and duplicates CAPI logic.
