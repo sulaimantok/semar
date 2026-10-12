@@ -1,26 +1,26 @@
-# ADR-0003: Lifecycle Kubernetes — Cluster API + ClusterClass
+# ADR-0003: Kubernetes Lifecycle — Cluster API + ClusterClass
 
 - **Status:** Accepted
-- **Tanggal:** 2026-10-12
+- **Date:** 2026-10-12
 
-## Konteks
-SEMAR harus membuat dan mengelola cluster Kubernetes di OpenStack dan Proxmox, termasuk day-2 (scale, upgrade, remediation, delete bersih). Membangun reconciliation sendiri tidak realistis untuk tim 1–2 orang.
+## Context
+SEMAR must create and manage Kubernetes clusters on OpenStack and Proxmox, including day-2 operations (scale, upgrade, remediation, clean delete). Building our own reconciliation is not realistic for a team of 1–2.
 
-## Keputusan
-- Gunakan **Cluster API** dengan **ClusterClass (managed topology)**. SEMAR hanya mengubah `Cluster.spec.topology`.
-- Provider: **CAPO** (OpenStack), **CAPMOX** (Proxmox), **CAPRKE2** (bootstrap + control plane), **CAAPH** (add-on Helm).
-- Distribusi pertama hanya **RKE2**. Kubeadm/KCP masuk backlog.
-- Klien ditulis terhadap **CAPI v1beta2**.
-- Satu cluster yang dibuat SEMAR = satu provider.
-- Provisioner cloud-init/SSH buatan sendiri **tidak** dibangun.
+## Decision
+- Use **Cluster API** with **ClusterClass (managed topology)**. SEMAR only changes `Cluster.spec.topology`.
+- Providers: **CAPO** (OpenStack), **CAPMOX** (Proxmox), **CAPRKE2** (bootstrap + control plane), **CAAPH** (Helm add-ons).
+- The first distribution is **RKE2** only. Kubeadm/KCP goes to the backlog.
+- The client targets **CAPI v1beta2**.
+- One SEMAR-provisioned cluster = one provider.
+- No home-grown cloud-init/SSH provisioner.
 
-## Konsekuensi
-- Day-2 (rolling upgrade, `MachineHealthCheck`, scale) tersedia dari ekosistem.
-- Management cluster (RKE2 3-node, dibangun di luar SEMAR) menjadi **aset Tier-0** dengan backup (etcd snapshot + `clusterctl move --to-directory`) dan restore drill.
-- Beban upgrade per kuartal dengan matriks kompatibilitas terkunci.
-- CAPMOX masih ber-API alpha dan dikelola vendor (IONOS); Proxmox dijadwalkan di Phase 3b setelah spike.
-- CCM/CSI meninggalkan resource (LB, volume) yang tidak dihapus CAPI, sehingga delete memerlukan saga pre-delete + sweep.
+## Consequences
+- Day-2 (rolling upgrade, `MachineHealthCheck`, scaling) comes from the ecosystem.
+- The management cluster (3-node RKE2, built outside SEMAR) becomes a **Tier-0 asset** with backups (etcd snapshot + `clusterctl move --to-directory`) and restore drills.
+- A quarterly upgrade budget against a pinned compatibility matrix.
+- CAPMOX still has an alpha API and is vendor-maintained (IONOS); Proxmox is scheduled for Phase 3b after a spike.
+- CCM/CSI leave behind resources (load balancers, volumes) that CAPI does not delete, so deletion needs a pre-delete saga plus a sweep.
 
-## Alternatif
-- **Orchestrator cloud-init buatan sendiri:** cepat untuk create, tetapi tidak menyelesaikan day-2.
-- **Rancher:** matang, tetapi menambah control plane terpisah dan tidak menyatu dengan model VM/Project SEMAR.
+## Alternatives
+- **Home-grown cloud-init orchestrator:** quick for create, but does not solve day-2.
+- **Rancher:** mature, but adds a separate control plane that does not fit SEMAR's VM/Project model.

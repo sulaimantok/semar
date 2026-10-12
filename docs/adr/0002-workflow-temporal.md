@@ -1,24 +1,24 @@
 # ADR-0002: Workflow Engine — Temporal
 
 - **Status:** Accepted
-- **Tanggal:** 2026-10-12
+- **Date:** 2026-10-12
 
-## Konteks
-Provisioning VM dan operasi cluster bersifat panjang dan rawan gagal sebagian (timeout jaringan, API provider lambat, worker restart). Sync inventory per provider harus singleton dan punya backoff.
+## Context
+VM provisioning and cluster operations are long-running and prone to partial failure (network timeouts, slow provider APIs, worker restarts). Inventory sync per provider must run as a singleton with backoff.
 
-## Keputusan
-Gunakan **Temporal** sejak Phase 1:
-- **Schedules** per provider untuk sync inventory (overlap policy SKIP).
-- **Workflow** untuk seluruh mutasi VM dan cluster, mengikuti konvensi idempotency (roadmap §3.8).
-- **Task queue per site** (`site-<id>`) agar worker dapat dipindah ke site remote.
+## Decision
+Use **Temporal** from Phase 1:
+- **Schedules** per provider for inventory sync (overlap policy SKIP).
+- **Workflows** for every VM and cluster mutation, following the idempotency conventions (roadmap §3.8).
+- **One task queue per site** (`site-<id>`) so workers can later run at remote sites.
 
-## Konsekuensi
-- Retry, timeout, kompensasi (Saga), dan ketahanan restart tersedia tanpa membangun state machine sendiri.
-- Activity **wajib idempotent** (find-or-create bertag `semar.op_id`) karena retry dapat terjadi setelah panggilan provider berhasil.
-- Payload & persistensi Temporal adalah permukaan sensitif: tidak boleh ada secret di payload, PayloadCodec mengenkripsi payload, mTLS ke frontend, UI hanya untuk Admin.
-- Kode workflow wajib di-versioning dan diuji dengan replay test di CI.
-- Komponen tambahan untuk dioperasikan; pada profil Lite memakai PostgreSQL yang sama (database terpisah) dan SQL visibility.
+## Consequences
+- Retries, timeouts, compensation (Saga) and restart resilience come built in, with no hand-written state machine.
+- Activities **must be idempotent** (find-or-create tagged with `semar.op_id`), because a retry can happen after the provider call has already succeeded.
+- Temporal payloads and persistence are a sensitive surface: no secrets in payloads, a PayloadCodec encrypts payloads, mTLS to the frontend, and the UI is Admin-only.
+- Workflow code must be versioned and covered by replay tests in CI.
+- One more component to operate; the Lite profile reuses the same PostgreSQL instance (separate database) with SQL visibility.
 
-## Alternatif
-- **Asynq/Celery + state machine di PostgreSQL:** lebih ringan, tetapi retry/kompensasi/singleton harus dibangun sendiri dan rawan bug.
-- **Goroutine + ticker untuk sync:** cukup untuk read-only, tetapi tidak memberi singleton lintas replika maupun task queue per site.
+## Alternatives
+- **Asynq/Celery + a state machine in PostgreSQL:** lighter, but retries, compensation and singletons would have to be built by hand and are bug-prone.
+- **Goroutine + ticker for sync:** enough for read-only work, but provides neither a singleton across replicas nor per-site task queues.

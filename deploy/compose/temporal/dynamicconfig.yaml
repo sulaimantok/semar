@@ -1,0 +1,4 @@
+# Dynamic config for the Lite profile. Keep small; add keys only when needed.
+limit.maxIDLength:
+  - value: 255
+    constraints: {}

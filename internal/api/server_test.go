@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sulaimantok/semar/internal/api/gen"
 	"github.com/sulaimantok/semar/internal/version"
 )
 
@@ -58,8 +59,8 @@ func TestReadyz(t *testing.T) {
 		t.Fatalf("failing check: status = %d, want 503", rec.Code)
 	}
 	p := decodeProblem(t, rec)
-	if !strings.Contains(p.Detail, "db") || strings.Contains(p.Detail, "temporal") {
-		t.Fatalf("detail = %q, want only the failing check name", p.Detail)
+	if p.Detail == nil || !strings.Contains(*p.Detail, "db") || strings.Contains(*p.Detail, "temporal") {
+		t.Fatalf("detail = %v, want only the failing check name", p.Detail)
 	}
 	if strings.Contains(rec.Body.String(), "secret detail") {
 		t.Fatal("readiness error detail leaked to client")
@@ -80,13 +81,31 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+func TestReadyzProblemCarriesRequestID(t *testing.T) {
+	bad := func(context.Context) error { return errors.New("down") }
+	h := newTestHandler(map[string]ReadinessCheck{"db": bad})
+	rec := do(t, h, http.MethodGet, "/readyz", http.Header{RequestIDHeader: {"ready-check-1"}})
+	p := decodeProblem(t, rec)
+	if p.RequestId == nil || *p.RequestId != "ready-check-1" || p.Instance == nil || *p.Instance != "/readyz" {
+		t.Fatalf("problem = %+v", p)
+	}
+}
+
+func TestWrongMethodIsProblemJSON(t *testing.T) {
+	rec := do(t, newTestHandler(nil), http.MethodPost, "/api/v1/version", nil)
+	if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 404 or 405", rec.Code)
+	}
+	decodeProblem(t, rec)
+}
+
 func TestUnknownRouteIsProblemJSON(t *testing.T) {
 	rec := do(t, newTestHandler(nil), http.MethodGet, "/api/v1/nope", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 	p := decodeProblem(t, rec)
-	if p.Status != http.StatusNotFound || p.Instance != "/api/v1/nope" || p.RequestID == "" {
+	if p.Status != http.StatusNotFound || p.Instance == nil || *p.Instance != "/api/v1/nope" || p.RequestId == nil || *p.RequestId == "" {
 		t.Fatalf("problem = %+v", p)
 	}
 }
@@ -119,17 +138,17 @@ func TestPanicBecomesProblem(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
-	if p := decodeProblem(t, rec); p.Detail != "" {
-		t.Fatalf("panic detail leaked: %q", p.Detail)
+	if p := decodeProblem(t, rec); p.Detail != nil {
+		t.Fatalf("panic detail leaked: %q", *p.Detail)
 	}
 }
 
-func decodeProblem(t *testing.T, rec *httptest.ResponseRecorder) Problem {
+func decodeProblem(t *testing.T, rec *httptest.ResponseRecorder) gen.Problem {
 	t.Helper()
 	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
 		t.Fatalf("content-type = %q, want application/problem+json", ct)
 	}
-	var p Problem
+	var p gen.Problem
 	if err := json.NewDecoder(rec.Body).Decode(&p); err != nil {
 		t.Fatal(err)
 	}

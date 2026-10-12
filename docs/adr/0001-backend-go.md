@@ -1,18 +1,18 @@
-# ADR-0001: Bahasa Backend — Go
+# ADR-0001: Backend Language — Go
 
 - **Status:** Accepted
-- **Tanggal:** 2026-10-12
+- **Date:** 2026-10-12
 
-## Konteks
-SEMAR berinteraksi dengan OpenStack, Proxmox VE, Kubernetes/Cluster API, dan Temporal, serta harus berjalan di `linux/amd64` dan `linux/arm64`. Tim berjumlah 1–2 engineer; sebagian terbiasa dengan Python (FastAPI).
+## Context
+SEMAR talks to OpenStack, Proxmox VE, Kubernetes/Cluster API and Temporal, and must run on `linux/amd64` and `linux/arm64`. The team is 1–2 engineers, some of whom are used to Python (FastAPI).
 
-## Keputusan
-Seluruh backend inti (`semar-api`, `semar-worker`) ditulis dalam **Go**. Tidak ada bahasa kedua di backend inti.
+## Decision
+The whole core backend (`semar-api`, `semar-worker`) is written in **Go**. No second language in the core backend.
 
-## Konsekuensi
-- Integrasi native: `gophercloud`, `client-go`/`controller-runtime` (CAPI v1beta2), Temporal Go SDK.
-- Single static binary per arsitektur; image distroless kecil; cross-compile tanpa emulasi.
-- Kurva belajar bagi anggota tim yang terbiasa Python; perlu konvensi kode dan linting sejak awal (`golangci-lint`).
+## Consequences
+- Native integrations: `gophercloud`, `client-go`/`controller-runtime` (CAPI v1beta2), Temporal Go SDK.
+- One static binary per architecture; small distroless images; cross-compilation without emulation.
+- Learning curve for team members used to Python; code conventions and linting (`golangci-lint`) are needed from day one.
 
-## Alternatif
-- **Python (FastAPI):** cepat untuk MVP dan familiar, tetapi integrasi CAPI/controller-runtime dan Temporal kurang native, serta distribusi multi-arch lebih berat.
+## Alternatives
+- **Python (FastAPI):** fast for an MVP and familiar, but CAPI/controller-runtime and Temporal integration is less native and multi-arch distribution is heavier.

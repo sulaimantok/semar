@@ -22,7 +22,7 @@ lint:
 	golangci-lint run ./...
 
 build:
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/semar-api ./cmd/semar-api
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o bin/ ./cmd/semar-api ./cmd/semar-worker
 
 run-api: build
 	./bin/semar-api
@@ -30,7 +30,27 @@ run-api: build
 # Multi-arch image; build arm64 natively on the ARM64 build host when possible.
 image:
 	docker buildx build --platform linux/amd64,linux/arm64 \
-		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t semar-api:$(VERSION) .
+		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t semar:$(VERSION) .
+
+COMPOSE := docker compose -f deploy/compose/compose.lite.yaml
+
+.PHONY: lite-up lite-down lite-logs
+lite-up:
+	$(COMPOSE) up -d --build
+
+lite-down:
+	$(COMPOSE) down
+
+lite-logs:
+	$(COMPOSE) logs -f semar-worker
 
 clean:
 	rm -rf bin coverage.out
+
+.PHONY: generate check-generate
+generate:
+	$(GO) generate ./...
+
+# Fails if generated code is out of date with api/openapi.yaml.
+check-generate: generate
+	git diff --exit-code -- internal/api/gen
