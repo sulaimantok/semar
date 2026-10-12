@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/sulaimantok/semar/internal/api/gen"
 	"github.com/sulaimantok/semar/internal/auth"
+	"github.com/sulaimantok/semar/internal/secret"
 	"github.com/sulaimantok/semar/internal/store"
 	"github.com/sulaimantok/semar/internal/store/storetest"
 )
@@ -24,10 +26,11 @@ const adminPassword = "admin-password-for-tests"
 // settingsAPI is an HTTP handler backed by a throwaway database, acting as
 // one signed-in browser session.
 type settingsAPI struct {
-	t      *testing.T
-	h      http.Handler
-	st     *store.Store
-	cookie *http.Cookie
+	t       *testing.T
+	h       http.Handler
+	st      *store.Store
+	keyring *secret.Keyring
+	cookie  *http.Cookie
 }
 
 // newAnonymousAPI returns an API client with a bootstrapped admin account
@@ -42,11 +45,17 @@ func newAnonymousAPI(t *testing.T) *settingsAPI {
 	if _, err := st.EnsureBootstrapAdmin(context.Background(), "admin", hash); err != nil {
 		t.Fatal(err)
 	}
-	return &settingsAPI{t: t, st: st, h: NewHandler(Options{
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Settings: st,
-		Auth:     st,
-		Audit:    st,
+	keyring, err := secret.NewKeyring("t1", map[string][]byte{"t1": bytes.Repeat([]byte{7}, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &settingsAPI{t: t, st: st, keyring: keyring, h: NewHandler(Options{
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Settings:    st,
+		Auth:        st,
+		Audit:       st,
+		Credentials: st,
+		Secrets:     keyring,
 	})}
 }
 

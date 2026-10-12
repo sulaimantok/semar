@@ -175,3 +175,35 @@ func (s *Store) rewrapBatch(ctx context.Context, ks secret.Store, limit int) (in
 	}
 	return len(items), nil
 }
+
+// ListCredentials returns the metadata of a provider's credentials, ordered
+// by purpose and scope. Secrets are never read.
+func (s *Store) ListCredentials(ctx context.Context, providerID string) ([]model.ProviderCredential, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, provider_id, purpose, scope, owner, kek_version, expires_at, created_at, rotated_at
+		FROM provider_credentials WHERE provider_id = $1 ORDER BY purpose, scope`, providerID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (model.ProviderCredential, error) {
+		var c model.ProviderCredential
+		var purpose string
+		err := r.Scan(&c.ID, &c.ProviderID, &purpose, &c.Scope, &c.Owner, &c.KEKVersion, &c.ExpiresAt, &c.CreatedAt, &c.RotatedAt)
+		c.Purpose = model.CredentialPurpose(purpose)
+		return c, err
+	})
+}
+
+// DeleteCredential removes the credential for (provider, purpose, scope).
+func (s *Store) DeleteCredential(ctx context.Context, providerID string, purpose model.CredentialPurpose, scope string) error {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM provider_credentials WHERE provider_id = $1 AND purpose = $2 AND scope = $3`,
+		providerID, string(purpose), scope)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

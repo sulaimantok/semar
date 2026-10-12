@@ -134,3 +134,35 @@ func ProviderFingerprint(typ contract.ProviderType, endpoints []string, region s
 	hosts = slices.Compact(hosts)
 	return string(typ) + "://" + strings.Join(hosts, ",") + "#" + region, nil
 }
+
+// credentialScopePrefixes lists, per purpose, the scope forms ADR-0005 allows.
+var credentialScopePrefixes = map[CredentialPurpose][]string{
+	PurposeDiscovery: {"provider"},
+	PurposeMutate:    {"project:", "pool:"},
+	PurposeCAPI:      {"project:"},
+	PurposeCluster:   {"cluster:"},
+}
+
+var scopeValue = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
+// ValidateCredentialScope checks that scope has a form allowed for purpose:
+// discovery → "provider"; mutate → "project:<id>" or "pool:<name>";
+// capi → "project:<id>"; cluster → "cluster:<id>".
+func ValidateCredentialScope(purpose CredentialPurpose, scope string) error {
+	prefixes, ok := credentialScopePrefixes[purpose]
+	if !ok {
+		return fmt.Errorf("unknown credential purpose %q", purpose)
+	}
+	for _, p := range prefixes {
+		if p == "provider" {
+			if scope == "provider" {
+				return nil
+			}
+			continue
+		}
+		if rest, found := strings.CutPrefix(scope, p); found && scopeValue.MatchString(rest) {
+			return nil
+		}
+	}
+	return fmt.Errorf("scope %q is not valid for purpose %q (allowed: %s)", scope, purpose, strings.Join(prefixes, ", "))
+}

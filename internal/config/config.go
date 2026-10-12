@@ -27,6 +27,12 @@ type API struct {
 	// CookieSecure marks the session cookie Secure; disable only for plain
 	// HTTP on localhost.
 	CookieSecure bool
+	// KEKID identifies KEKs[KEKID], the key-encryption key that seals new
+	// provider credentials (ADR-0004).
+	KEKID string
+	// KEKs holds the current KEK and previous ones kept for decryption until
+	// `semar-api kek-rewrap` has moved every credential to the current KEK.
+	KEKs map[string][]byte
 }
 
 // LoadAPI reads SEMAR_* variables via getenv (os.Getenv in production).
@@ -38,7 +44,14 @@ func LoadAPI(getenv func(string) string) (API, error) {
 		MigrateOnStart:  true,
 		SessionTTL:      12 * time.Hour,
 		CookieSecure:    true,
+		KEKID:           "k1",
 	}
+	setString(getenv, "SEMAR_KEK_ID", &cfg.KEKID)
+	keks, err := loadKeys(getenv, cfg.KEKID, "SEMAR_KEK", "SEMAR_KEK_PREVIOUS")
+	if err != nil {
+		return API{}, err
+	}
+	cfg.KEKs = keks
 	cfg.BootstrapAdminPassword = getenv("SEMAR_BOOTSTRAP_ADMIN_PASSWORD")
 	if v := getenv("SEMAR_SESSION_TTL"); v != "" {
 		d, err := time.ParseDuration(v)

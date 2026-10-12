@@ -59,29 +59,11 @@ func LoadWorker(getenv func(string) string) (Worker, error) {
 		cfg.SyncInterval = d
 	}
 
-	key, err := decodeKey(getenv("SEMAR_PAYLOAD_KEY"))
+	keys, err := loadKeys(getenv, cfg.PayloadKeyID, "SEMAR_PAYLOAD_KEY", "SEMAR_PAYLOAD_PREVIOUS_KEYS")
 	if err != nil {
-		return Worker{}, fmt.Errorf("SEMAR_PAYLOAD_KEY: %w", err)
+		return Worker{}, err
 	}
-	cfg.PayloadKeys[cfg.PayloadKeyID] = key
-
-	// SEMAR_PAYLOAD_PREVIOUS_KEYS="k0=<base64>,k-1=<base64>"
-	if v := getenv("SEMAR_PAYLOAD_PREVIOUS_KEYS"); v != "" {
-		for _, pair := range strings.Split(v, ",") {
-			id, b64, ok := strings.Cut(strings.TrimSpace(pair), "=")
-			if !ok || id == "" {
-				return Worker{}, errors.New("SEMAR_PAYLOAD_PREVIOUS_KEYS: want id=base64[,id=base64]")
-			}
-			if _, dup := cfg.PayloadKeys[id]; dup {
-				return Worker{}, fmt.Errorf("SEMAR_PAYLOAD_PREVIOUS_KEYS: duplicate key id %q", id)
-			}
-			k, err := decodeKey(b64)
-			if err != nil {
-				return Worker{}, fmt.Errorf("SEMAR_PAYLOAD_PREVIOUS_KEYS[%s]: %w", id, err)
-			}
-			cfg.PayloadKeys[id] = k
-		}
-	}
+	cfg.PayloadKeys = keys
 
 	if v := getenv("SEMAR_FAKE_PROVIDERS"); v != "" {
 		cfg.FakeProviders = nil

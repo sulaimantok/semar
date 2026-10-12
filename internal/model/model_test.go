@@ -46,3 +46,33 @@ func TestProviderFingerprintRejectsBadEndpoints(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateCredentialScope(t *testing.T) {
+	ok := map[CredentialPurpose][]string{
+		PurposeDiscovery: {"provider"},
+		PurposeMutate:    {"project:0a1b2c", "pool:payment"},
+		PurposeCAPI:      {"project:payment"},
+		PurposeCluster:   {"cluster:prod-1"},
+	}
+	for purpose, scopes := range ok {
+		for _, s := range scopes {
+			if err := ValidateCredentialScope(purpose, s); err != nil {
+				t.Errorf("%s/%s rejected: %v", purpose, s, err)
+			}
+		}
+	}
+	bad := map[CredentialPurpose][]string{
+		PurposeDiscovery: {"project:x", "", "providers"},
+		PurposeMutate:    {"provider", "project:", "pool:a b", "cluster:x"},
+		PurposeCAPI:      {"pool:x"},
+		PurposeCluster:   {"project:x"},
+		"root":           {"provider"},
+	}
+	for purpose, scopes := range bad {
+		for _, s := range scopes {
+			if err := ValidateCredentialScope(purpose, s); err == nil {
+				t.Errorf("%s/%q accepted", purpose, s)
+			}
+		}
+	}
+}

@@ -61,6 +61,12 @@ Logins, logouts and every Settings change are written to an append-only, hash-ch
 semar-api audit-verify      # uses SEMAR_DATABASE_URL; exits non-zero if the chain is broken
 ```
 
+Provider credentials are write-only: `PUT /api/v1/providers/{id}/credentials` seals the secret with envelope encryption and no endpoint ever returns it. To rotate the KEK, set a new `SEMAR_KEK_ID`/`SEMAR_KEK`, move the old key to `SEMAR_KEK_PREVIOUS`, restart, then run:
+
+```bash
+semar-api kek-rewrap        # rewraps every credential with the current KEK; then drop the old key
+```
+
 In production run semar-api as a non-superuser database role: the append-only guarantee relies on triggers that a superuser could disable.
 
 ### Configuration
@@ -74,6 +80,9 @@ In production run semar-api as a non-superuser database role: the append-only gu
 | `SEMAR_BOOTSTRAP_ADMIN_PASSWORD` | — | Creates the `admin` user (global Admin) on first start when no user exists; remove afterwards |
 | `SEMAR_SESSION_TTL` | `12h` | Login session lifetime (1m–168h) |
 | `SEMAR_COOKIE_SECURE` | `true` | Secure flag of the session cookie; set `false` only for plain HTTP on localhost |
+| `SEMAR_KEK_ID` | `k1` | ID of the current key-encryption key for provider credentials |
+| `SEMAR_KEK` | — (required) | Current KEK, 32 bytes base64 (`openssl rand -base64 32`); keep it outside the database host in production |
+| `SEMAR_KEK_PREVIOUS` | — | Old KEKs kept for decryption during rotation: `k0=<base64>,…` |
 | `SEMAR_HTTP_ADDR` | `:8080` | Listen address |
 | `SEMAR_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `SEMAR_SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown limit |

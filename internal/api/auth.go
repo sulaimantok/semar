@@ -64,6 +64,9 @@ var operationAccess = map[string]access{
 	"CreateProjectMapping": accessAdmin,
 	"CreateProvider":       accessAdmin,
 	"DeleteProvider":       accessAdmin,
+	"ListCredentials":      accessAdmin,
+	"PutCredential":        accessAdmin,
+	"DeleteCredential":     accessAdmin,
 }
 
 // authorize is a strict-server middleware enforcing operationAccess.
