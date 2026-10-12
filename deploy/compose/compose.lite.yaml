@@ -1,0 +1,105 @@
+# SEMAR Lite profile (roadmap §2.1) — DEVELOPMENT ONLY.
+# All ports are bound to 127.0.0.1. Copy .env.example to .env first.
+name: semar-lite
+
+x-temporal-env: &temporal-env
+  POSTGRES_SEEDS: postgres
+  POSTGRES_USER: ${POSTGRES_USER:-semar}
+  POSTGRES_PWD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-semar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: semar
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - 127.0.0.1:5432:5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d semar"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  temporal-schema:
+    image: temporalio/admin-tools:${TEMPORAL_VERSION:-1.32.1}
+    environment: *temporal-env
+    entrypoint: ["/bin/sh", "/opt/semar/setup-schema.sh"]
+    volumes:
+      - ./temporal/setup-schema.sh:/opt/semar/setup-schema.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  temporal:
+    image: temporalio/server:${TEMPORAL_VERSION:-1.32.1}
+    environment:
+      <<: *temporal-env
+      TEMPORAL_SERVER_CONFIG_FILE_PATH: /etc/temporal/config.yaml
+    volumes:
+      - ./temporal/config.yaml:/etc/temporal/config.yaml:ro
+      - ./temporal/dynamicconfig.yaml:/etc/temporal/dynamicconfig.yaml:ro
+    ports:
+      - 127.0.0.1:7233:7233
+    depends_on:
+      temporal-schema:
+        condition: service_completed_successfully
+
+  temporal-namespace:
+    image: temporalio/admin-tools:${TEMPORAL_VERSION:-1.32.1}
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      SEMAR_TEMPORAL_NAMESPACE: ${SEMAR_TEMPORAL_NAMESPACE:-semar}
+    entrypoint: ["/bin/sh", "/opt/semar/create-namespace.sh"]
+    volumes:
+      - ./temporal/create-namespace.sh:/opt/semar/create-namespace.sh:ro
+    depends_on:
+      - temporal
+    restart: "no"
+
+  # Admin-only (roadmap §3.4): reachable on the host loopback only.
+  temporal-ui:
+    image: temporalio/ui:${TEMPORAL_UI_VERSION:-2.55.0}
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_DEFAULT_NAMESPACE: ${SEMAR_TEMPORAL_NAMESPACE:-semar}
+    ports:
+      - 127.0.0.1:8233:8080
+    depends_on:
+      - temporal
+
+  semar-worker:
+    build:
+      context: ../..
+    image: semar:dev
+    entrypoint: ["/usr/local/bin/semar-worker"]
+    environment:
+      SEMAR_TEMPORAL_ADDRESS: temporal:7233
+      SEMAR_TEMPORAL_NAMESPACE: ${SEMAR_TEMPORAL_NAMESPACE:-semar}
+      SEMAR_SITE_ID: ${SEMAR_SITE_ID:-default}
+      SEMAR_SYNC_INTERVAL: ${SEMAR_SYNC_INTERVAL:-60s}
+      SEMAR_PAYLOAD_KEY_ID: ${SEMAR_PAYLOAD_KEY_ID:-k1}
+      SEMAR_PAYLOAD_KEY: ${SEMAR_PAYLOAD_KEY:?set SEMAR_PAYLOAD_KEY in .env}
+      # During key rotation: "k1=<old base64 key>" (comma-separated).
+      SEMAR_PAYLOAD_PREVIOUS_KEYS: ${SEMAR_PAYLOAD_PREVIOUS_KEYS:-}
+    depends_on:
+      temporal-namespace:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  semar-api:
+    image: semar:dev
+    environment:
+      SEMAR_HTTP_ADDR: :8080
+    ports:
+      - 127.0.0.1:8080:8080
+    depends_on:
+      - semar-worker
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
