@@ -2,13 +2,24 @@
 
 **System for Enterprise Multi-cloud & Application Runtime** — a single control plane for VMs on OpenStack and Proxmox VE, Kubernetes clusters (RKE2 via Cluster API), and unified observability, with x86_64 and ARM64 as first-class citizens.
 
-> **Status:** Phase 0 (foundation). Not ready for use.
+> **Status:** Phase 1 (MVP) in progress. Not ready for production use.
+
+## Progress
+
+| Phase | Scope | State |
+|---|---|---|
+| 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment and spikes S1–S3 |
+| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation. Next: inventory persistence, OpenStack/Proxmox drivers, console proxy, UI pages |
+| 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
+
+Roadmap, detailed tracker and exit criteria are kept in the planning workspace (see [Planning Documents](#planning-documents)).
 
 ## What's Here
 
 | Component | Location | Notes |
 |---|---|---|
-| API server | `cmd/semar-api`, `internal/api` | `/healthz`, `/readyz`, `/api/v1/version`; RFC 9457 errors; `X-Request-ID` |
+| API server | `cmd/semar-api`, `internal/api` | Health/readiness/version, Settings, auth and credential endpoints; RFC 9457 errors; `X-Request-ID`; CSRF protection; 1 MiB body limit |
+| Auth | `internal/auth`, `internal/api/auth.go` | Local users (argon2id), server-side sessions, role bindings, per-operation access policies (fail closed) |
 | Generated API layer | `internal/api/gen` | Strict `net/http` server generated from the spec (`go generate ./...`) |
 | Worker | `cmd/semar-worker`, `internal/workflow` | Temporal worker: per-provider sync Schedules, AES-256-GCM payload codec with key rotation |
 | OpenAPI contract | `api/openapi.yaml` | Source of truth for the frontend ↔ backend contract |
@@ -16,7 +27,7 @@
 | Contract test suite | `internal/driver/contracttest` | Run by every driver (Fake on each PR, lab nightly) |
 | Fake Driver | `internal/driver/fake` | Deterministic inventory + fault injection (latency, error rate, fail-next) |
 | Web UI | `web/` | React + Vite + TypeScript + Tailwind; module-based layout, API types generated from the spec (see `web/README.md`) |
-| Store | `internal/store`, `internal/model`, `internal/secret` | PostgreSQL (pgx) with embedded goose migrations; sites, projects, providers, project mappings; credentials sealed with envelope encryption (ADR-0004) |
+| Store | `internal/store`, `internal/model`, `internal/secret` | PostgreSQL (pgx) with embedded goose migrations: sites, projects, providers, project mappings, users, sessions, role bindings, append-only hash-chained audit log; credentials sealed with envelope encryption (ADR-0004) |
 | Lite profile | `deploy/compose/` | PostgreSQL + Temporal + UI + SEMAR (development only) |
 | ADRs & spikes | `docs/adr/`, `docs/spikes/` | ADR-0001 … ADR-0007, spike S4 |
 
@@ -44,12 +55,35 @@ export SEMAR_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postg
 ### Lite profile (local stack)
 
 ```bash
-cp deploy/compose/.env.example deploy/compose/.env   # set POSTGRES_PASSWORD and SEMAR_PAYLOAD_KEY
-make lite-up                                         # postgres, temporal, temporal-ui, semar-worker, semar-api
-make lite-logs                                       # follow the worker
+cp deploy/compose/.env.example deploy/compose/.env
+# set POSTGRES_PASSWORD, SEMAR_PAYLOAD_KEY, SEMAR_KEK and SEMAR_BOOTSTRAP_ADMIN_PASSWORD
+# (keys: `openssl rand -base64 32`)
+make lite-up      # postgres, temporal, temporal-ui, semar-worker, semar-api
+make lite-logs    # follow the worker
+```
+
+Then sign in as `admin` with the bootstrap password and remove `SEMAR_BOOTSTRAP_ADMIN_PASSWORD` from `.env`:
+
+```bash
+curl -c jar -H 'X-Requested-By: cli' -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<bootstrap password>"}' http://127.0.0.1:8080/api/v1/auth/login
+curl -b jar http://127.0.0.1:8080/api/v1/providers
 ```
 
 Ports are bound to `127.0.0.1`: API `8080`, Temporal `7233`, Temporal UI `8233`, PostgreSQL `5432`. See [spike S4](docs/spikes/s4-temporal-lite.md) for measurements.
+
+### API overview
+
+The full contract is [`api/openapi.yaml`](api/openapi.yaml).
+
+| Endpoint | Access |
+|---|---|
+| `GET /healthz`, `GET /readyz`, `GET /api/v1/version` | public |
+| `POST /api/v1/auth/login`, `POST /api/v1/auth/logout` | public |
+| `GET /api/v1/auth/me` | signed in |
+| `GET /api/v1/sites`, `/projects`, `/projects/{id}/mappings`, `/providers`, `/providers/{id}` | signed in |
+| `POST` sites, projects, mappings, providers; `DELETE /providers/{id}` | admin |
+| `GET/PUT/DELETE /api/v1/providers/{id}/credentials` | admin (secrets are write-only) |
 
 ### Authentication and audit
 
