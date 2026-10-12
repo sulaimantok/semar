@@ -34,3 +34,11 @@ image:
 
 clean:
 	rm -rf bin coverage.out
+
+.PHONY: generate check-generate
+generate:
+	$(GO) generate ./...
+
+# Fails if generated code is out of date with api/openapi.yaml.
+check-generate: generate
+	git diff --exit-code -- internal/api/gen

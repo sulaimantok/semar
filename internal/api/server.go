@@ -1,5 +1,6 @@
-// Package api implements the semar-api HTTP surface. The contract lives in
-// api/openapi.yaml at the repository root.
+// Package api implements the semar-api HTTP surface. Routes and response
+// types are generated from api/openapi.yaml into package gen; this package
+// implements gen.StrictServerInterface.
 package api
 
 import (
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sulaimantok/semar/internal/api/gen"
 	"github.com/sulaimantok/semar/internal/version"
 )
 
@@ -34,45 +36,77 @@ func NewHandler(opts Options) http.Handler {
 	if opts.CheckTimeout <= 0 {
 		opts.CheckTimeout = 2 * time.Second
 	}
+	log := opts.Logger
+
+	strict := gen.NewStrictHandlerWithOptions(&server{opts: opts}, nil, gen.StrictHTTPServerOptions{
+		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			writeProblem(w, r, http.StatusBadRequest, err.Error())
+		},
+		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			log.ErrorContext(r.Context(), "handler error",
+				slog.Any("error", err), slog.String("request_id", RequestIDFrom(r.Context())))
+			writeProblem(w, r, http.StatusInternalServerError, "")
+		},
+	})
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-	mux.HandleFunc("GET /readyz", readyz(opts))
-	mux.HandleFunc("GET /api/v1/version", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, version.Get())
+	gen.HandlerWithOptions(strict, gen.StdHTTPServerOptions{
+		BaseRouter: mux,
+		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			writeProblem(w, r, http.StatusBadRequest, err.Error())
+		},
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusNotFound, "no route for "+r.Method+" "+r.URL.Path)
 	})
 
 	var h http.Handler = mux
-	h = withRecover(opts.Logger, h)
-	h = withAccessLog(opts.Logger, h)
+	h = withRecover(log, h)
+	h = withAccessLog(log, h)
 	h = withRequestID(h)
 	return h
 }
 
-func readyz(opts Options) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		failed := make(map[string]string)
-		for name, check := range opts.Checks {
-			ctx, cancel := context.WithTimeout(r.Context(), opts.CheckTimeout)
-			err := check(ctx)
-			cancel()
-			if err != nil {
-				failed[name] = err.Error()
-				opts.Logger.WarnContext(r.Context(), "readiness check failed",
-					slog.String("check", name), slog.Any("error", err))
-			}
+// server implements gen.StrictServerInterface.
+type server struct {
+	opts Options
+}
+
+var _ gen.StrictServerInterface = (*server)(nil)
+
+func (s *server) GetHealthz(context.Context, gen.GetHealthzRequestObject) (gen.GetHealthzResponseObject, error) {
+	return gen.GetHealthz200JSONResponse{Status: "ok"}, nil
+}
+
+func (s *server) GetReadyz(ctx context.Context, _ gen.GetReadyzRequestObject) (gen.GetReadyzResponseObject, error) {
+	failed := make(map[string]struct{})
+	for name, check := range s.opts.Checks {
+		checkCtx, cancel := context.WithTimeout(ctx, s.opts.CheckTimeout)
+		err := check(checkCtx)
+		cancel()
+		if err != nil {
+			failed[name] = struct{}{}
+			s.opts.Logger.WarnContext(ctx, "readiness check failed",
+				slog.String("check", name), slog.Any("error", err))
 		}
-		if len(failed) > 0 {
-			// Error details stay in logs; only check names are exposed.
-			names := strings.Join(slices.Sorted(maps.Keys(failed)), ", ")
-			writeProblem(w, r, http.StatusServiceUnavailable, "not ready: "+names)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	}
+	if len(failed) > 0 {
+		// Error details stay in logs; only check names are exposed.
+		detail := "not ready: " + strings.Join(slices.Sorted(maps.Keys(failed)), ", ")
+		p := newProblem(ctx, "/readyz", http.StatusServiceUnavailable, detail)
+		return gen.GetReadyz503ApplicationProblemPlusJSONResponse{
+			ProblemApplicationProblemPlusJSONResponse: gen.ProblemApplicationProblemPlusJSONResponse(p),
+		}, nil
+	}
+	return gen.GetReadyz200JSONResponse{Status: "ready"}, nil
+}
+
+func (s *server) GetVersion(context.Context, gen.GetVersionRequestObject) (gen.GetVersionResponseObject, error) {
+	info := version.Get()
+	return gen.GetVersion200JSONResponse{
+		Version:   info.Version,
+		Commit:    info.Commit,
+		GoVersion: info.GoVersion,
+		Platform:  info.Platform,
+	}, nil
 }

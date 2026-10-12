@@ -1,0 +1,8 @@
+# oapi-codegen configuration; run `go generate ./...` after editing
+# api/openapi.yaml. CI fails if the generated code is out of date.
+package: gen
+output: api.gen.go
+generate:
+  std-http-server: true
+  strict-server: true
+  models: true
