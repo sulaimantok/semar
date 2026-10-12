@@ -290,6 +290,8 @@ func TestRewrapCredentialsAfterKEKRotation(t *testing.T) {
 	}
 }
 
+func projectModel(id string) model.Project { return model.Project{ID: id, Name: id} }
+
 func mustCreate(t *testing.T, st *store.Store, p model.Provider) {
 	t.Helper()
 	if _, err := st.CreateProvider(context.Background(), p); err != nil {

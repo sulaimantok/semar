@@ -124,7 +124,11 @@ func (s *server) createSite(ctx context.Context, body *gen.SiteCreate) (gen.Site
 	if body.Labels != nil {
 		site.Labels = *body.Labels
 	}
-	created, err := st.CreateSite(ctx, site)
+	var created model.Site
+	err = s.audited(ctx, "site.create", site.ID, func() (err error) {
+		created, err = st.CreateSite(ctx, site)
+		return err
+	})
 	if err != nil {
 		return gen.Site{}, err
 	}
@@ -169,7 +173,12 @@ func (s *server) createProject(ctx context.Context, body *gen.ProjectCreate) (mo
 	if body == nil || strings.TrimSpace(body.Name) == "" {
 		return model.Project{}, badRequest("name is required")
 	}
-	return st.CreateProject(ctx, model.Project{ID: body.Id, Name: strings.TrimSpace(body.Name)})
+	var created model.Project
+	err = s.audited(ctx, "project.create", body.Id, func() (err error) {
+		created, err = st.CreateProject(ctx, model.Project{ID: body.Id, Name: strings.TrimSpace(body.Name)})
+		return err
+	})
+	return created, err
 }
 
 // --- Project mappings ---
@@ -227,11 +236,17 @@ func (s *server) createProjectMapping(ctx context.Context, projectID string, bod
 		}
 		return model.ProjectMapping{}, err
 	}
-	return st.CreateProjectMapping(ctx, model.ProjectMapping{
+	m := model.ProjectMapping{
 		ProjectID:     projectID,
 		ProviderID:    body.ProviderId,
 		ExternalScope: strings.TrimSpace(body.ExternalScope),
+	}
+	var created model.ProjectMapping
+	err = s.audited(ctx, "project_mapping.create", projectID+"/"+m.ProviderID+"/"+m.ExternalScope, func() (err error) {
+		created, err = st.CreateProjectMapping(ctx, m)
+		return err
 	})
+	return created, err
 }
 
 // --- Providers ---
@@ -291,7 +306,11 @@ func (s *server) createProvider(ctx context.Context, body *gen.ProviderCreate) (
 	if err != nil {
 		return model.Provider{}, badRequest("%s", err.Error())
 	}
-	created, err := st.CreateProvider(ctx, p)
+	var created model.Provider
+	err = s.audited(ctx, "provider.create", p.ID, func() (err error) {
+		created, err = st.CreateProvider(ctx, p)
+		return err
+	})
 	if errors.Is(err, store.ErrConflict) {
 		return model.Provider{}, &apiError{status: http.StatusConflict, detail: "a provider with this id, or for the same cloud and region, is already registered"}
 	}
@@ -316,7 +335,9 @@ func (s *server) DeleteProvider(ctx context.Context, req gen.DeleteProviderReque
 	instance := "/api/v1/providers/" + req.ProviderId
 	st, err := s.settings()
 	if err == nil {
-		err = st.DeleteProvider(ctx, req.ProviderId)
+		err = s.audited(ctx, "provider.delete", req.ProviderId, func() error {
+			return st.DeleteProvider(ctx, req.ProviderId)
+		})
 	}
 	if err != nil {
 		code, p := s.problemFor(ctx, instance, err)

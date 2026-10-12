@@ -10,6 +10,11 @@ info:
     Every response carries an `X-Request-ID` header (pattern
     `^[A-Za-z0-9._-]{1,64}$`): a valid incoming value is echoed, otherwise the
     server generates one. It is set by middleware, not per operation.
+
+    Authentication: `POST /api/v1/auth/login` sets the `semar_session` cookie
+    (HttpOnly, SameSite=Strict). Every POST, PUT, PATCH and DELETE request must
+    also send an `X-Requested-By` header (any non-empty value) as CSRF
+    protection; requests without it are rejected with 403.
 servers:
   - url: /
 paths:
@@ -48,6 +53,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/VersionInfo"
+        default:
+          $ref: "#/components/responses/Problem"
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Sign in with a local account
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Signed in; the session cookie is set.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        default:
+          $ref: "#/components/responses/Problem"
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Sign out and clear the session cookie
+      operationId: logout
+      responses:
+        "204":
+          description: Signed out
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Problem"
+  /api/v1/auth/me:
+    get:
+      tags: [auth]
+      summary: The signed-in user and their role bindings
+      operationId: getMe
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
         default:
           $ref: "#/components/responses/Problem"
   /api/v1/sites:
@@ -235,6 +292,40 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          minLength: 1
+          format: password
+    Role:
+      type: string
+      enum: [admin, operator, viewer]
+    RoleBinding:
+      type: object
+      required: [role]
+      properties:
+        role:
+          $ref: "#/components/schemas/Role"
+        projectId:
+          $ref: "#/components/schemas/EntityId"
+        providerId:
+          $ref: "#/components/schemas/EntityId"
+    Me:
+      type: object
+      required: [username, roles]
+      properties:
+        username:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/RoleBinding"
     EntityId:
       type: string
       pattern: "^[a-z0-9][a-z0-9-]{0,62}$"

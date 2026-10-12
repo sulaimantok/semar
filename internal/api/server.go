@@ -28,6 +28,15 @@ type Options struct {
 	CheckTimeout time.Duration
 	// Settings backs the Settings endpoints (sites, projects, providers).
 	Settings SettingsStore
+	// Auth backs login and session resolution. Without it every
+	// authenticated operation answers 401.
+	Auth AuthStore
+	// Audit receives audit events (login, logout, every Settings mutation).
+	Audit AuditLog
+	// SessionTTL is the session lifetime. Defaults to 12h.
+	SessionTTL time.Duration
+	// CookieSecure marks the session cookie Secure (HTTPS only).
+	CookieSecure bool
 }
 
 // NewHandler returns the root HTTP handler with middleware applied.
@@ -38,9 +47,13 @@ func NewHandler(opts Options) http.Handler {
 	if opts.CheckTimeout <= 0 {
 		opts.CheckTimeout = 2 * time.Second
 	}
+	if opts.SessionTTL <= 0 {
+		opts.SessionTTL = 12 * time.Hour
+	}
 	log := opts.Logger
+	srv := &server{opts: opts}
 
-	strict := gen.NewStrictHandlerWithOptions(&server{opts: opts}, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(srv, []gen.StrictMiddlewareFunc{srv.authorize}, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			writeProblem(w, r, http.StatusBadRequest, err.Error())
 		},
@@ -64,6 +77,8 @@ func NewHandler(opts Options) http.Handler {
 
 	var h http.Handler = mux
 	h = withRecover(log, h)
+	h = withAuthentication(opts.Auth, log, h)
+	h = withCSRFProtection(h)
 	h = withAccessLog(log, h)
 	h = withRequestID(h)
 	return h

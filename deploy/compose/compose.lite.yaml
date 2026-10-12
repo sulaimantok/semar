@@ -96,6 +96,10 @@ services:
     environment:
       SEMAR_HTTP_ADDR: :8080
       SEMAR_DATABASE_URL: postgres://${POSTGRES_USER:-semar}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/semar?sslmode=disable
+      # Creates the "admin" user on first start only; remove it afterwards.
+      SEMAR_BOOTSTRAP_ADMIN_PASSWORD: ${SEMAR_BOOTSTRAP_ADMIN_PASSWORD:-}
+      # The Lite profile is served over plain HTTP on 127.0.0.1.
+      SEMAR_COOKIE_SECURE: "false"
     ports:
       - 127.0.0.1:8080:8080
     depends_on:
