@@ -12,8 +12,6 @@
 | 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation. Next: inventory persistence, OpenStack/Proxmox drivers, console proxy, UI pages |
 | 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
 
-Roadmap, detailed tracker and exit criteria are kept in the planning workspace (see [Planning Documents](#planning-documents)).
-
 ## What's Here
 
 | Component | Location | Notes |
@@ -148,6 +146,6 @@ func TestReadOnlyContract(t *testing.T) {
 }
 ```
 
-## Planning Documents
+## Architecture Decisions
 
-The roadmap, implementation tracker and technical notes are maintained in the planning workspace (`tech-garden-dev/opensources/recommendation/semar/`). Binding architecture decisions live in [`docs/adr/`](docs/adr/).
+Binding architecture decisions are recorded as ADRs in [`docs/adr/`](docs/adr/); spike reports live in [`docs/spikes/`](docs/spikes/).
