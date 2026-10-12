@@ -55,10 +55,195 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List sites */
+        get: operations["listSites"];
+        put?: never;
+        /** Create a site */
+        post: operations["createSite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List projects */
+        get: operations["listProjects"];
+        put?: never;
+        /** Create a project */
+        post: operations["createProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{projectId}/mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        /** List the provider scopes mapped to a project */
+        get: operations["listProjectMappings"];
+        put?: never;
+        /**
+         * Map a provider scope (OpenStack project, PVE pool) to the project
+         * @description Each external scope of a provider maps to at most one project (409 otherwise).
+         */
+        post: operations["createProjectMapping"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List active providers */
+        get: operations["listProviders"];
+        put?: never;
+        /**
+         * Register a provider
+         * @description The server derives the provider fingerprint; registering the same cloud
+         *     twice while it is active fails with 409.
+         */
+        post: operations["createProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/{providerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        /** Get a provider */
+        get: operations["getProvider"];
+        put?: never;
+        post?: never;
+        /** Remove a provider (soft delete; history is kept) */
+        delete: operations["deleteProvider"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @example os-jkt */
+        EntityId: string;
+        Site: {
+            id: components["schemas"]["EntityId"];
+            name: string;
+            labels: {
+                [key: string]: string;
+            };
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        SiteCreate: {
+            id: components["schemas"]["EntityId"];
+            name: string;
+            labels?: {
+                [key: string]: string;
+            };
+        };
+        SiteList: {
+            items: components["schemas"]["Site"][];
+        };
+        Project: {
+            id: components["schemas"]["EntityId"];
+            name: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ProjectCreate: {
+            id: components["schemas"]["EntityId"];
+            name: string;
+        };
+        ProjectList: {
+            items: components["schemas"]["Project"][];
+        };
+        ProjectMapping: {
+            /** Format: int64 */
+            id: number;
+            projectId: components["schemas"]["EntityId"];
+            providerId: components["schemas"]["EntityId"];
+            /** @description OpenStack project ID, "pool:<name>" for a PVE pool, … */
+            externalScope: string;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ProjectMappingCreate: {
+            providerId: components["schemas"]["EntityId"];
+            externalScope: string;
+        };
+        ProjectMappingList: {
+            items: components["schemas"]["ProjectMapping"][];
+        };
+        /** @enum {string} */
+        ProviderType: "openstack" | "proxmox" | "fake";
+        Provider: {
+            id: components["schemas"]["EntityId"];
+            type: components["schemas"]["ProviderType"];
+            name: string;
+            siteId?: components["schemas"]["EntityId"];
+            endpoints: string[];
+            regionName: string;
+            /** @description Stable identity of the backing cloud, derived by the server. */
+            fingerprint: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        ProviderCreate: {
+            id: components["schemas"]["EntityId"];
+            type: components["schemas"]["ProviderType"];
+            name: string;
+            siteId?: components["schemas"]["EntityId"];
+            /** @description Keystone URL, or the API URLs of every node of one PVE cluster. */
+            endpoints: string[];
+            /** @description OpenStack region; empty for Proxmox. */
+            regionName?: string;
+        };
+        ProviderList: {
+            items: components["schemas"]["Provider"][];
+        };
         Status: {
             /**
              * @example ok
@@ -93,7 +278,10 @@ export interface components {
             };
         };
     };
-    parameters: never;
+    parameters: {
+        ProjectId: components["schemas"]["EntityId"];
+        ProviderId: components["schemas"]["EntityId"];
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -158,6 +346,238 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["VersionInfo"];
                 };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listSites: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All sites */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteList"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    createSite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SiteCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Site"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description All projects */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectList"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    createProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listProjectMappings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mappings of the project */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectMappingList"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    createProjectMapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectMappingCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectMapping"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active providers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderList"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    createProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderCreate"];
+            };
+        };
+        responses: {
+            /** @description Registered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Provider"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The provider */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Provider"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    deleteProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Problem"];
         };

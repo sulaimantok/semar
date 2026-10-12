@@ -95,10 +95,14 @@ services:
     image: semar:dev
     environment:
       SEMAR_HTTP_ADDR: :8080
+      SEMAR_DATABASE_URL: postgres://${POSTGRES_USER:-semar}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/semar?sslmode=disable
     ports:
       - 127.0.0.1:8080:8080
     depends_on:
-      - semar-worker
+      postgres:
+        condition: service_healthy
+      semar-worker:
+        condition: service_started
     restart: unless-stopped
 
 volumes:

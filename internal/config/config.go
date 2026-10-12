@@ -2,8 +2,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,6 +15,10 @@ type API struct {
 	HTTPAddr        string
 	LogLevel        slog.Level
 	ShutdownTimeout time.Duration
+	// DatabaseURL is a PostgreSQL connection URL (required).
+	DatabaseURL string
+	// MigrateOnStart applies pending migrations before serving.
+	MigrateOnStart bool
 }
 
 // LoadAPI reads SEMAR_* variables via getenv (os.Getenv in production).
@@ -21,6 +27,18 @@ func LoadAPI(getenv func(string) string) (API, error) {
 		HTTPAddr:        ":8080",
 		LogLevel:        slog.LevelInfo,
 		ShutdownTimeout: 15 * time.Second,
+		MigrateOnStart:  true,
+	}
+	cfg.DatabaseURL = getenv("SEMAR_DATABASE_URL")
+	if cfg.DatabaseURL == "" {
+		return API{}, errors.New("SEMAR_DATABASE_URL is required (postgres://user:password@host:5432/semar)")
+	}
+	if v := getenv("SEMAR_MIGRATE_ON_START"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return API{}, fmt.Errorf("SEMAR_MIGRATE_ON_START: %w", err)
+		}
+		cfg.MigrateOnStart = b
 	}
 	if v := getenv("SEMAR_HTTP_ADDR"); v != "" {
 		cfg.HTTPAddr = v
