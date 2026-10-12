@@ -16,6 +16,7 @@
 | Contract test suite | `internal/driver/contracttest` | Run by every driver (Fake on each PR, lab nightly) |
 | Fake Driver | `internal/driver/fake` | Deterministic inventory + fault injection (latency, error rate, fail-next) |
 | Web UI | `web/` | React + Vite + TypeScript + Tailwind; module-based layout, API types generated from the spec (see `web/README.md`) |
+| Store | `internal/store`, `internal/model`, `internal/secret` | PostgreSQL (pgx) with embedded goose migrations; sites, projects, providers, project mappings; credentials sealed with envelope encryption (ADR-0004) |
 | Lite profile | `deploy/compose/` | PostgreSQL + Temporal + UI + SEMAR (development only) |
 | ADRs & spikes | `docs/adr/`, `docs/spikes/` | ADR-0001 … ADR-0007, spike S4 |
 
@@ -24,15 +25,21 @@
 Prerequisites: Go 1.26+, `golangci-lint` v2, Docker Buildx (optional).
 
 ```bash
-make test      # go test -race
+make test      # go test -race (database tests need SEMAR_TEST_DATABASE_URL, see below)
 make lint      # golangci-lint
 make generate  # regenerate internal/api/gen from api/openapi.yaml
 make build     # bin/semar-api, bin/semar-worker
-make run-api   # listens on :8080
+make run-api   # listens on :8080 (needs SEMAR_DATABASE_URL)
 make image     # multi-arch image for linux/amd64 + linux/arm64
 ```
 
 Web UI (Node 24+): `cd web && npm ci && npm run dev`, then open http://localhost:5173 (proxies the API on `:8080`).
+
+Database tests create and drop a throwaway database per test. Point them at a PostgreSQL user that may create databases (they are skipped locally when unset and fail in CI):
+
+```bash
+export SEMAR_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+```
 
 ### Lite profile (local stack)
 
@@ -50,6 +57,8 @@ Ports are bound to `127.0.0.1`: API `8080`, Temporal `7233`, Temporal UI `8233`,
 
 | Variable | Default | Description |
 |---|---|---|
+| `SEMAR_DATABASE_URL` | — (required) | PostgreSQL URL, e.g. `postgres://semar:…@localhost:5432/semar?sslmode=disable` |
+| `SEMAR_MIGRATE_ON_START` | `true` | Apply pending migrations before serving (safe with several replicas) |
 | `SEMAR_HTTP_ADDR` | `:8080` | Listen address |
 | `SEMAR_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `SEMAR_SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown limit |

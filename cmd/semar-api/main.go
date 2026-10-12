@@ -14,6 +14,7 @@ import (
 
 	"github.com/sulaimantok/semar/internal/api"
 	"github.com/sulaimantok/semar/internal/config"
+	"github.com/sulaimantok/semar/internal/store"
 	"github.com/sulaimantok/semar/internal/version"
 )
 
@@ -31,9 +32,26 @@ func run() error {
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 
+	startCtx, cancelStart := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelStart()
+	if cfg.MigrateOnStart {
+		if err := store.Migrate(startCtx, cfg.DatabaseURL); err != nil {
+			return err
+		}
+		log.Info("database migrations applied")
+	}
+	st, err := store.Open(startCtx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
 	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewHandler(api.Options{Logger: log}),
+		Addr: cfg.HTTPAddr,
+		Handler: api.NewHandler(api.Options{
+			Logger: log,
+			Checks: map[string]api.ReadinessCheck{"database": st.Ping},
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
