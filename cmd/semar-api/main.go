@@ -2,6 +2,7 @@
 //
 //	semar-api                serve the API
 //	semar-api audit-verify   verify the audit log hash chain and exit
+//	semar-api kek-rewrap     rewrap every credential with the current KEK and exit
 package main
 
 import (
@@ -18,16 +19,26 @@ import (
 	"github.com/sulaimantok/semar/internal/api"
 	"github.com/sulaimantok/semar/internal/auth"
 	"github.com/sulaimantok/semar/internal/config"
+	"github.com/sulaimantok/semar/internal/secret"
 	"github.com/sulaimantok/semar/internal/store"
 	"github.com/sulaimantok/semar/internal/version"
 )
 
 func main() {
 	var err error
-	if len(os.Args) > 1 && os.Args[1] == "audit-verify" {
-		err = auditVerify()
-	} else {
+	cmd := ""
+	if len(os.Args) > 1 {
+		cmd = os.Args[1]
+	}
+	switch cmd {
+	case "":
 		err = run()
+	case "audit-verify":
+		err = auditVerify()
+	case "kek-rewrap":
+		err = kekRewrap()
+	default:
+		err = fmt.Errorf("unknown command %q (want audit-verify or kek-rewrap)", cmd)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "semar-api:", err)
@@ -61,6 +72,10 @@ func run() error {
 			return err
 		}
 	}
+	keyring, err := secret.NewKeyring(cfg.KEKID, cfg.KEKs)
+	if err != nil {
+		return err
+	}
 	if !cfg.CookieSecure {
 		log.Warn("session cookie is not Secure; use only on localhost over plain HTTP")
 	}
@@ -75,6 +90,8 @@ func run() error {
 			Audit:        st,
 			SessionTTL:   cfg.SessionTTL,
 			CookieSecure: cfg.CookieSecure,
+			Credentials:  st,
+			Secrets:      keyring,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -149,5 +166,37 @@ func auditVerify() error {
 		return fmt.Errorf("audit chain verification failed after %d valid events: %w", n, err)
 	}
 	fmt.Printf("audit chain OK: %d events verified\n", n)
+	return nil
+}
+
+// kekRewrap moves every credential to the current KEK so previous KEKs can be
+// removed from SEMAR_KEK_PREVIOUS afterwards (ADR-0004).
+func kekRewrap() error {
+	cfg, err := config.LoadAPI(os.Getenv)
+	if err != nil {
+		return err
+	}
+	keyring, err := secret.NewKeyring(cfg.KEKID, cfg.KEKs)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	st, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	n, err := st.RewrapCredentials(ctx, keyring)
+	if err != nil {
+		return fmt.Errorf("rewrap stopped after %d credentials: %w", n, err)
+	}
+	if _, err := st.AppendAudit(ctx, store.AuditEvent{
+		Actor: "system", Action: "credential.kek_rewrap", Target: cfg.KEKID, Outcome: store.AuditSuccess,
+		Details: map[string]string{"rewrapped": fmt.Sprint(n)},
+	}); err != nil {
+		return fmt.Errorf("audit rewrap: %w", err)
+	}
+	fmt.Printf("rewrapped %d credentials to KEK %q\n", n, cfg.KEKID)
 	return nil
 }

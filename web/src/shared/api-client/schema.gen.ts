@@ -207,10 +207,79 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/providers/{providerId}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        /** List a provider's credentials (metadata only; secrets are never returned) */
+        get: operations["listCredentials"];
+        /**
+         * Store or replace a credential (write-only)
+         * @description The secret is sealed with envelope encryption before it reaches the
+         *     database and is never returned by any endpoint (ADR-0004, ADR-0005).
+         *     Allowed scopes per purpose: discovery → `provider`; mutate →
+         *     `project:<id>` or `pool:<name>`; capi → `project:<id>`; cluster →
+         *     `cluster:<id>`.
+         */
+        put: operations["putCredential"];
+        post?: never;
+        /** Delete a credential */
+        delete: operations["deleteCredential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @enum {string} */
+        CredentialPurpose: "discovery" | "mutate" | "capi" | "cluster";
+        Credential: {
+            /** Format: uuid */
+            id: string;
+            purpose: components["schemas"]["CredentialPurpose"];
+            scope: string;
+            /** @description Account that owns the credential at the provider (e.g. the service user). */
+            owner: string;
+            /** @description Version of the key-encryption key sealing this credential. */
+            kekVersion: string;
+            /** Format: date-time */
+            expiresAt?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            rotatedAt: string;
+        };
+        CredentialPut: {
+            purpose: components["schemas"]["CredentialPurpose"];
+            /**
+             * @example provider
+             * @example project:0a1b2c3d
+             * @example pool:payment
+             */
+            scope: string;
+            owner?: string;
+            /** Format: date-time */
+            expiresAt?: string;
+            /**
+             * @description Provider-specific secret fields, e.g. OpenStack
+             *     `{"application_credential_id": "...", "application_credential_secret": "..."}`
+             *     or Proxmox `{"token_id": "user@realm!name", "token_secret": "..."}`.
+             */
+            secret: {
+                [key: string]: string;
+            };
+        };
+        CredentialList: {
+            items: components["schemas"]["Credential"][];
+        };
         LoginRequest: {
             username: string;
             /** Format: password */
@@ -707,6 +776,80 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Credential metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialList"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    putCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialPut"];
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Credential"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    deleteCredential: {
+        parameters: {
+            query: {
+                purpose: components["schemas"]["CredentialPurpose"];
+                scope: string;
+            };
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
             204: {
                 headers: {
                     [name: string]: unknown;

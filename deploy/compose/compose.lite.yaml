@@ -100,6 +100,10 @@ services:
       SEMAR_BOOTSTRAP_ADMIN_PASSWORD: ${SEMAR_BOOTSTRAP_ADMIN_PASSWORD:-}
       # The Lite profile is served over plain HTTP on 127.0.0.1.
       SEMAR_COOKIE_SECURE: "false"
+      # Key-encryption key for provider credentials (ADR-0004).
+      SEMAR_KEK_ID: ${SEMAR_KEK_ID:-k1}
+      SEMAR_KEK: ${SEMAR_KEK:?set SEMAR_KEK in .env}
+      SEMAR_KEK_PREVIOUS: ${SEMAR_KEK_PREVIOUS:-}
     ports:
       - 127.0.0.1:8080:8080
     depends_on:

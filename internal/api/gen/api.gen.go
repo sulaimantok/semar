@@ -9,12 +9,38 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// Defines values for CredentialPurpose.
+const (
+	Capi      CredentialPurpose = "capi"
+	Cluster   CredentialPurpose = "cluster"
+	Discovery CredentialPurpose = "discovery"
+	Mutate    CredentialPurpose = "mutate"
+)
+
+// Valid indicates whether the value is a known member of the CredentialPurpose enum.
+func (e CredentialPurpose) Valid() bool {
+	switch e {
+	case Capi:
+		return true
+	case Cluster:
+		return true
+	case Discovery:
+		return true
+	case Mutate:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for ProviderType.
 const (
@@ -56,6 +82,45 @@ func (e Role) Valid() bool {
 	default:
 		return false
 	}
+}
+
+// Credential defines model for Credential.
+type Credential struct {
+	CreatedAt time.Time          `json:"createdAt"`
+	ExpiresAt *time.Time         `json:"expiresAt,omitempty"`
+	Id        openapi_types.UUID `json:"id"`
+
+	// KekVersion Version of the key-encryption key sealing this credential.
+	KekVersion string `json:"kekVersion"`
+
+	// Owner Account that owns the credential at the provider (e.g. the service user).
+	Owner     string            `json:"owner"`
+	Purpose   CredentialPurpose `json:"purpose"`
+	RotatedAt time.Time         `json:"rotatedAt"`
+	Scope     string            `json:"scope"`
+}
+
+// CredentialList defines model for CredentialList.
+type CredentialList struct {
+	Items []Credential `json:"items"`
+}
+
+// CredentialPurpose defines model for CredentialPurpose.
+type CredentialPurpose string
+
+// CredentialPut defines model for CredentialPut.
+type CredentialPut struct {
+	ExpiresAt *time.Time        `json:"expiresAt,omitempty"`
+	Owner     *string           `json:"owner,omitempty"`
+	Purpose   CredentialPurpose `json:"purpose"`
+
+	// Scope Examples: provider, project:0a1b2c3d, pool:payment
+	Scope string `json:"scope"`
+
+	// Secret Provider-specific secret fields, e.g. OpenStack
+	// `{"application_credential_id": "...", "application_credential_secret": "..."}`
+	// or Proxmox `{"token_id": "user@realm!name", "token_secret": "..."}`.
+	Secret *map[string]string `json:"secret,omitempty"`
 }
 
 // EntityId Examples: os-jkt
@@ -236,6 +301,12 @@ type ProjectId = EntityId
 // ProviderId Examples: os-jkt
 type ProviderId = EntityId
 
+// DeleteCredentialParams defines parameters for DeleteCredential.
+type DeleteCredentialParams struct {
+	Purpose CredentialPurpose `form:"purpose" json:"purpose"`
+	Scope   string            `form:"scope" json:"scope"`
+}
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
@@ -247,6 +318,9 @@ type CreateProjectMappingJSONRequestBody = ProjectMappingCreate
 
 // CreateProviderJSONRequestBody defines body for CreateProvider for application/json ContentType.
 type CreateProviderJSONRequestBody = ProviderCreate
+
+// PutCredentialJSONRequestBody defines body for PutCredential for application/json ContentType.
+type PutCredentialJSONRequestBody = CredentialPut
 
 // CreateSiteJSONRequestBody defines body for CreateSite for application/json ContentType.
 type CreateSiteJSONRequestBody = SiteCreate
@@ -286,6 +360,15 @@ type ServerInterface interface {
 	// GetProvider Get a provider
 	// (GET /api/v1/providers/{providerId})
 	GetProvider(w http.ResponseWriter, r *http.Request, providerId ProviderId)
+	// DeleteCredential Delete a credential
+	// (DELETE /api/v1/providers/{providerId}/credentials)
+	DeleteCredential(w http.ResponseWriter, r *http.Request, providerId ProviderId, params DeleteCredentialParams)
+	// ListCredentials List a provider's credentials (metadata only; secrets are never returned)
+	// (GET /api/v1/providers/{providerId}/credentials)
+	ListCredentials(w http.ResponseWriter, r *http.Request, providerId ProviderId)
+	// PutCredential Store or replace a credential (write-only)
+	// (PUT /api/v1/providers/{providerId}/credentials)
+	PutCredential(w http.ResponseWriter, r *http.Request, providerId ProviderId)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(w http.ResponseWriter, r *http.Request)
@@ -514,6 +597,113 @@ func (siw *ServerInterfaceWrapper) GetProvider(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// DeleteCredential operation middleware
+func (siw *ServerInterfaceWrapper) DeleteCredential(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "providerId" -------------
+	var providerId ProviderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "providerId", r.PathValue("providerId"), &providerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "providerId", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteCredentialParams
+
+	// ------------- Required query parameter "purpose" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "purpose", r.URL.Query(), &params.Purpose, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "purpose"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "purpose", Err: err})
+		}
+		return
+	}
+
+	// ------------- Required query parameter "scope" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "scope", r.URL.Query(), &params.Scope, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "scope"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "scope", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteCredential(w, r, providerId, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListCredentials operation middleware
+func (siw *ServerInterfaceWrapper) ListCredentials(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "providerId" -------------
+	var providerId ProviderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "providerId", r.PathValue("providerId"), &providerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "providerId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListCredentials(w, r, providerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutCredential operation middleware
+func (siw *ServerInterfaceWrapper) PutCredential(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "providerId" -------------
+	var providerId ProviderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "providerId", r.PathValue("providerId"), &providerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "providerId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutCredential(w, r, providerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListSites operation middleware
 func (siw *ServerInterfaceWrapper) ListSites(w http.ResponseWriter, r *http.Request) {
 
@@ -720,6 +910,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/providers", wrapper.CreateProvider)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/providers/{providerId}", wrapper.DeleteProvider)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers/{providerId}", wrapper.GetProvider)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.DeleteCredential)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.ListCredentials)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.PutCredential)
 
 	return m
 }
@@ -1158,6 +1351,119 @@ func (response GetProviderdefaultApplicationProblemPlusJSONResponse) VisitGetPro
 	return err
 }
 
+type DeleteCredentialRequestObject struct {
+	ProviderId ProviderId `json:"providerId"`
+	Params     DeleteCredentialParams
+}
+
+type DeleteCredentialResponseObject interface {
+	VisitDeleteCredentialResponse(w http.ResponseWriter) error
+}
+
+type DeleteCredential204Response struct {
+}
+
+func (response DeleteCredential204Response) VisitDeleteCredentialResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteCredentialdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response DeleteCredentialdefaultApplicationProblemPlusJSONResponse) VisitDeleteCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCredentialsRequestObject struct {
+	ProviderId ProviderId `json:"providerId"`
+}
+
+type ListCredentialsResponseObject interface {
+	VisitListCredentialsResponse(w http.ResponseWriter) error
+}
+
+type ListCredentials200JSONResponse CredentialList
+
+func (response ListCredentials200JSONResponse) VisitListCredentialsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCredentialsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListCredentialsdefaultApplicationProblemPlusJSONResponse) VisitListCredentialsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCredentialRequestObject struct {
+	ProviderId ProviderId `json:"providerId"`
+	Body       *PutCredentialJSONRequestBody
+}
+
+type PutCredentialResponseObject interface {
+	VisitPutCredentialResponse(w http.ResponseWriter) error
+}
+
+type PutCredential200JSONResponse Credential
+
+func (response PutCredential200JSONResponse) VisitPutCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutCredentialdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response PutCredentialdefaultApplicationProblemPlusJSONResponse) VisitPutCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListSitesRequestObject struct {
 }
 
@@ -1366,6 +1672,15 @@ type StrictServerInterface interface {
 	// GetProvider Get a provider
 	// (GET /api/v1/providers/{providerId})
 	GetProvider(ctx context.Context, request GetProviderRequestObject) (GetProviderResponseObject, error)
+	// DeleteCredential Delete a credential
+	// (DELETE /api/v1/providers/{providerId}/credentials)
+	DeleteCredential(ctx context.Context, request DeleteCredentialRequestObject) (DeleteCredentialResponseObject, error)
+	// ListCredentials List a provider's credentials (metadata only; secrets are never returned)
+	// (GET /api/v1/providers/{providerId}/credentials)
+	ListCredentials(ctx context.Context, request ListCredentialsRequestObject) (ListCredentialsResponseObject, error)
+	// PutCredential Store or replace a credential (write-only)
+	// (PUT /api/v1/providers/{providerId}/credentials)
+	PutCredential(ctx context.Context, request PutCredentialRequestObject) (PutCredentialResponseObject, error)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(ctx context.Context, request ListSitesRequestObject) (ListSitesResponseObject, error)
@@ -1715,6 +2030,92 @@ func (sh *strictHandler) GetProvider(w http.ResponseWriter, r *http.Request, pro
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetProviderResponseObject); ok {
 		if err := validResponse.VisitGetProviderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteCredential operation middleware
+func (sh *strictHandler) DeleteCredential(w http.ResponseWriter, r *http.Request, providerId ProviderId, params DeleteCredentialParams) {
+	var request DeleteCredentialRequestObject
+
+	request.ProviderId = providerId
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteCredential(ctx, request.(DeleteCredentialRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteCredential")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteCredentialResponseObject); ok {
+		if err := validResponse.VisitDeleteCredentialResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListCredentials operation middleware
+func (sh *strictHandler) ListCredentials(w http.ResponseWriter, r *http.Request, providerId ProviderId) {
+	var request ListCredentialsRequestObject
+
+	request.ProviderId = providerId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCredentials(ctx, request.(ListCredentialsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCredentials")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListCredentialsResponseObject); ok {
+		if err := validResponse.VisitListCredentialsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutCredential operation middleware
+func (sh *strictHandler) PutCredential(w http.ResponseWriter, r *http.Request, providerId ProviderId) {
+	var request PutCredentialRequestObject
+
+	request.ProviderId = providerId
+
+	var body PutCredentialJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutCredential(ctx, request.(PutCredentialRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutCredential")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutCredentialResponseObject); ok {
+		if err := validResponse.VisitPutCredentialResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

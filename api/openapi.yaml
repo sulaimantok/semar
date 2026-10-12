@@ -270,6 +270,67 @@ paths:
           description: Removed
         default:
           $ref: "#/components/responses/Problem"
+  /api/v1/providers/{providerId}/credentials:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    get:
+      tags: [settings]
+      summary: List a provider's credentials (metadata only; secrets are never returned)
+      operationId: listCredentials
+      responses:
+        "200":
+          description: Credential metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CredentialList"
+        default:
+          $ref: "#/components/responses/Problem"
+    put:
+      tags: [settings]
+      summary: Store or replace a credential (write-only)
+      description: |
+        The secret is sealed with envelope encryption before it reaches the
+        database and is never returned by any endpoint (ADR-0004, ADR-0005).
+        Allowed scopes per purpose: discovery → `provider`; mutate →
+        `project:<id>` or `pool:<name>`; capi → `project:<id>`; cluster →
+        `cluster:<id>`.
+      operationId: putCredential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialPut"
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Credential"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      tags: [settings]
+      summary: Delete a credential
+      operationId: deleteCredential
+      parameters:
+        - name: purpose
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/CredentialPurpose"
+        - name: scope
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+        default:
+          $ref: "#/components/responses/Problem"
 components:
   parameters:
     ProjectId:
@@ -292,6 +353,68 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    CredentialPurpose:
+      type: string
+      enum: [discovery, mutate, capi, cluster]
+    Credential:
+      type: object
+      required: [id, purpose, scope, owner, kekVersion, createdAt, rotatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        purpose:
+          $ref: "#/components/schemas/CredentialPurpose"
+        scope:
+          type: string
+        owner:
+          type: string
+          description: Account that owns the credential at the provider (e.g. the service user).
+        kekVersion:
+          type: string
+          description: Version of the key-encryption key sealing this credential.
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        rotatedAt:
+          type: string
+          format: date-time
+    CredentialPut:
+      type: object
+      required: [purpose, scope, secret]
+      properties:
+        purpose:
+          $ref: "#/components/schemas/CredentialPurpose"
+        scope:
+          type: string
+          examples: [provider, "project:0a1b2c3d", "pool:payment"]
+        owner:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        secret:
+          type: object
+          writeOnly: true
+          minProperties: 1
+          maxProperties: 32
+          additionalProperties:
+            type: string
+          description: |
+            Provider-specific secret fields, e.g. OpenStack
+            `{"application_credential_id": "...", "application_credential_secret": "..."}`
+            or Proxmox `{"token_id": "user@realm!name", "token_secret": "..."}`.
+    CredentialList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Credential"
     LoginRequest:
       type: object
       required: [username, password]

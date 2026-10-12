@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sulaimantok/semar/internal/api/gen"
+	"github.com/sulaimantok/semar/internal/secret"
 	"github.com/sulaimantok/semar/internal/version"
 )
 
@@ -37,6 +38,11 @@ type Options struct {
 	SessionTTL time.Duration
 	// CookieSecure marks the session cookie Secure (HTTPS only).
 	CookieSecure bool
+	// Credentials and Secrets back the write-only credential endpoints.
+	Credentials CredentialStore
+	Secrets     secret.Store
+	// MaxBodyBytes limits request bodies. Defaults to 1 MiB.
+	MaxBodyBytes int64
 }
 
 // NewHandler returns the root HTTP handler with middleware applied.
@@ -49,6 +55,9 @@ func NewHandler(opts Options) http.Handler {
 	}
 	if opts.SessionTTL <= 0 {
 		opts.SessionTTL = 12 * time.Hour
+	}
+	if opts.MaxBodyBytes <= 0 {
+		opts.MaxBodyBytes = 1 << 20
 	}
 	log := opts.Logger
 	srv := &server{opts: opts}
@@ -79,6 +88,7 @@ func NewHandler(opts Options) http.Handler {
 	h = withRecover(log, h)
 	h = withAuthentication(opts.Auth, log, h)
 	h = withCSRFProtection(h)
+	h = withBodyLimit(opts.MaxBodyBytes, h)
 	h = withAccessLog(log, h)
 	h = withRequestID(h)
 	return h
