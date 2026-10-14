@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { NavLink, Outlet } from "react-router";
 
 import { cn } from "@/shared/utils/cn";
@@ -5,7 +6,12 @@ import { cn } from "@/shared/utils/cn";
 import { appShellStyles as styles } from "./app-shell.styles";
 import { visibleNavItems } from "./nav-items";
 
-export function AppShell() {
+export interface IAppShellProps {
+  /** Rendered at the bottom of the sidebar (e.g. the signed-in user menu). */
+  footer?: ReactNode;
+}
+
+export function AppShell({ footer }: IAppShellProps) {
   return (
     <div className={styles.root}>
       <aside className={styles.sidebar}>
@@ -31,6 +37,7 @@ export function AppShell() {
             </NavLink>
           ))}
         </nav>
+        {footer && <div className={styles.footer}>{footer}</div>}
       </aside>
       <main className={styles.main}>
         <Outlet />

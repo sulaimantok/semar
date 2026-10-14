@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,9 @@ func inventoryStore(t *testing.T) *store.Store {
 func listVMs(t *testing.T, st *store.Store, f store.ResourceFilter) []store.Resource {
 	t.Helper()
 	f.Kind = store.KindVM
+	if !f.Visibility.AllAssigned && len(f.Visibility.Grants) == 0 {
+		f.Visibility.All = true
+	}
 	rs, err := st.ListResources(context.Background(), f)
 	if err != nil {
 		t.Fatal(err)
@@ -259,5 +263,62 @@ func TestDeletedProviderCannotSync(t *testing.T) {
 	}
 	if _, err := st.ApplySnapshot(ctx, snapshot(t0, vm("1", "a", "", 1)), 3); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("sync of deleted provider: %v, want ErrNotFound", err)
+	}
+}
+
+func TestListResourcesEnforcesVisibility(t *testing.T) {
+	st := inventoryStore(t)
+	ctx := context.Background()
+	mustCreate(t, st, provider("os-jkt", "fp-os"))
+	for _, p := range []string{"payment", "search"} {
+		if _, err := st.CreateProject(ctx, model.Project{ID: p, Name: p}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, m := range []model.ProjectMapping{
+		{ProjectID: "payment", ProviderID: "pve-lab", ExternalScope: "pool:payment"},
+		{ProjectID: "search", ProviderID: "pve-lab", ExternalScope: "pool:search"},
+		{ProjectID: "payment", ProviderID: "os-jkt", ExternalScope: "proj-pay"},
+	} {
+		if _, err := st.CreateProjectMapping(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.ApplySnapshot(ctx, snapshot(t0, vm("p1", "pay", "pool:payment", 1), vm("s1", "search", "pool:search", 1), vm("u1", "unassigned", "", 1)), 3); err != nil {
+		t.Fatal(err)
+	}
+	osSnap := store.Snapshot{ProviderID: "os-jkt", ObservedAt: t0, Resources: []store.ObservedResource{vm("p2", "pay-os", "proj-pay", 1)}}
+	if _, err := st.ApplySnapshot(ctx, osSnap, 3); err != nil {
+		t.Fatal(err)
+	}
+
+	ids := func(v store.Visibility) []string {
+		t.Helper()
+		rs, err := st.ListResources(ctx, store.ResourceFilter{Kind: store.KindVM, Visibility: v})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := []string{}
+		for _, r := range rs {
+			out = append(out, r.ExternalID)
+		}
+		return out
+	}
+	cases := map[string]struct {
+		v    store.Visibility
+		want string
+	}{
+		"nothing":               {store.Visibility{}, ""},
+		"admin sees all":        {store.Visibility{All: true}, "p2 p1 s1 u1"},
+		"viewer: assigned only": {store.Visibility{AllAssigned: true}, "p2 p1 s1"},
+		"project grant":         {store.Visibility{Grants: []store.Grant{{ProjectID: "payment"}}}, "p2 p1"},
+		"provider grant":        {store.Visibility{Grants: []store.Grant{{ProviderID: "pve-lab"}}}, "p1 s1"},
+		"project in provider":   {store.Visibility{Grants: []store.Grant{{ProjectID: "payment", ProviderID: "os-jkt"}}}, "p2"},
+		"two grants":            {store.Visibility{Grants: []store.Grant{{ProjectID: "search"}, {ProjectID: "payment", ProviderID: "os-jkt"}}}, "p2 s1"},
+	}
+	for name, c := range cases {
+		if got := strings.Join(ids(c.v), " "); got != c.want {
+			t.Errorf("%s: got %q, want %q", name, got, c.want)
+		}
 	}
 }

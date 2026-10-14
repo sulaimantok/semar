@@ -331,6 +331,74 @@ paths:
           description: Deleted
         default:
           $ref: "#/components/responses/Problem"
+  /api/v1/resources:
+    get:
+      tags: [inventory]
+      summary: List cached inventory resources the caller may see
+      description: |
+        Served from SEMAR's inventory cache, never from the providers. Results
+        are limited to the caller's role bindings: global admins and operators
+        see everything (including resources not mapped to a project), global
+        viewers see every resource that belongs to a project, and scoped
+        bindings see their projects/providers. Hypervisors are visible to
+        global bindings only.
+      operationId: listResources
+      parameters:
+        - name: kind
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/ResourceKind"
+        - name: providerId
+          in: query
+          schema:
+            $ref: "#/components/schemas/EntityId"
+        - name: projectId
+          in: query
+          schema:
+            $ref: "#/components/schemas/EntityId"
+        - name: includeOrphaned
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: cursor
+          in: query
+          description: Opaque cursor from a previous page's `nextCursor`.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: One page of resources
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceList"
+        default:
+          $ref: "#/components/responses/Problem"
+  /api/v1/providers/{providerId}/sync-status:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    get:
+      tags: [inventory]
+      summary: Last inventory sync outcome of a provider
+      operationId: getProviderSyncStatus
+      responses:
+        "200":
+          description: Sync status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncStatus"
+        default:
+          $ref: "#/components/responses/Problem"
 components:
   parameters:
     ProjectId:
@@ -353,6 +421,77 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    ResourceKind:
+      type: string
+      enum: [hypervisor, vm, image, network, volume]
+    Resource:
+      type: object
+      required: [providerId, kind, externalId, name, externalScope, arch, status, spec, observedAt, firstSeenAt]
+      properties:
+        providerId:
+          $ref: "#/components/schemas/EntityId"
+        kind:
+          $ref: "#/components/schemas/ResourceKind"
+        externalId:
+          type: string
+        name:
+          type: string
+        externalScope:
+          type: string
+          description: Provider-side owner scope (OpenStack project, PVE pool).
+        projectId:
+          $ref: "#/components/schemas/EntityId"
+        arch:
+          type: string
+          enum: [amd64, arm64, unknown]
+        status:
+          type: string
+        spec:
+          type: object
+          additionalProperties: true
+          description: Kind-specific attributes (vcpus, memoryMiB, ipAddresses, sizeGiB, …).
+        observedAt:
+          type: string
+          format: date-time
+          description: When the provider last reported this state (data age).
+        firstSeenAt:
+          type: string
+          format: date-time
+        orphanedAt:
+          type: string
+          format: date-time
+    ResourceList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Resource"
+        nextCursor:
+          type: string
+    SyncStatus:
+      type: object
+      required: [providerId, status, lastAttemptAt, consecutiveFailures, lastError]
+      properties:
+        providerId:
+          $ref: "#/components/schemas/EntityId"
+        status:
+          type: string
+          enum: [healthy, degraded, unreachable]
+        lastAttemptAt:
+          type: string
+          format: date-time
+        lastSuccessAt:
+          type: string
+          format: date-time
+        lastObservedAt:
+          type: string
+          format: date-time
+        consecutiveFailures:
+          type: integer
+        lastError:
+          type: string
     CredentialPurpose:
       type: string
       enum: [discovery, mutate, capi, cluster]

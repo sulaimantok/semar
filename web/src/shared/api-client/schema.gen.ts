@@ -235,10 +235,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List cached inventory resources the caller may see
+         * @description Served from SEMAR's inventory cache, never from the providers. Results
+         *     are limited to the caller's role bindings: global admins and operators
+         *     see everything (including resources not mapped to a project), global
+         *     viewers see every resource that belongs to a project, and scoped
+         *     bindings see their projects/providers. Hypervisors are visible to
+         *     global bindings only.
+         */
+        get: operations["listResources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/providers/{providerId}/sync-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        /** Last inventory sync outcome of a provider */
+        get: operations["getProviderSyncStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @enum {string} */
+        ResourceKind: "hypervisor" | "vm" | "image" | "network" | "volume";
+        Resource: {
+            providerId: components["schemas"]["EntityId"];
+            kind: components["schemas"]["ResourceKind"];
+            externalId: string;
+            name: string;
+            /** @description Provider-side owner scope (OpenStack project, PVE pool). */
+            externalScope: string;
+            projectId?: components["schemas"]["EntityId"];
+            /** @enum {string} */
+            arch: "amd64" | "arm64" | "unknown";
+            status: string;
+            /** @description Kind-specific attributes (vcpus, memoryMiB, ipAddresses, sizeGiB, …). */
+            spec: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format: date-time
+             * @description When the provider last reported this state (data age).
+             */
+            observedAt: string;
+            /** Format: date-time */
+            firstSeenAt: string;
+            /** Format: date-time */
+            orphanedAt?: string;
+        };
+        ResourceList: {
+            items: components["schemas"]["Resource"][];
+            nextCursor?: string;
+        };
+        SyncStatus: {
+            providerId: components["schemas"]["EntityId"];
+            /** @enum {string} */
+            status: "healthy" | "degraded" | "unreachable";
+            /** Format: date-time */
+            lastAttemptAt: string;
+            /** Format: date-time */
+            lastSuccessAt?: string;
+            /** Format: date-time */
+            lastObservedAt?: string;
+            consecutiveFailures: number;
+            lastError: string;
+        };
         /** @enum {string} */
         CredentialPurpose: "discovery" | "mutate" | "capi" | "cluster";
         Credential: {
@@ -855,6 +943,58 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listResources: {
+        parameters: {
+            query: {
+                kind: components["schemas"]["ResourceKind"];
+                providerId?: components["schemas"]["EntityId"];
+                projectId?: components["schemas"]["EntityId"];
+                includeOrphaned?: boolean;
+                limit?: number;
+                /** @description Opaque cursor from a previous page's `nextCursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of resources */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceList"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getProviderSyncStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sync status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncStatus"];
+                };
             };
             default: components["responses"]["Problem"];
         };

@@ -63,6 +63,54 @@ func (e ProviderType) Valid() bool {
 	}
 }
 
+// Defines values for ResourceArch.
+const (
+	Amd64   ResourceArch = "amd64"
+	Arm64   ResourceArch = "arm64"
+	Unknown ResourceArch = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the ResourceArch enum.
+func (e ResourceArch) Valid() bool {
+	switch e {
+	case Amd64:
+		return true
+	case Arm64:
+		return true
+	case Unknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResourceKind.
+const (
+	Hypervisor ResourceKind = "hypervisor"
+	Image      ResourceKind = "image"
+	Network    ResourceKind = "network"
+	Vm         ResourceKind = "vm"
+	Volume     ResourceKind = "volume"
+)
+
+// Valid indicates whether the value is a known member of the ResourceKind enum.
+func (e ResourceKind) Valid() bool {
+	switch e {
+	case Hypervisor:
+		return true
+	case Image:
+		return true
+	case Network:
+		return true
+	case Vm:
+		return true
+	case Volume:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Role.
 const (
 	Admin    Role = "admin"
@@ -78,6 +126,27 @@ func (e Role) Valid() bool {
 	case Operator:
 		return true
 	case Viewer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SyncStatusStatus.
+const (
+	Degraded    SyncStatusStatus = "degraded"
+	Healthy     SyncStatusStatus = "healthy"
+	Unreachable SyncStatusStatus = "unreachable"
+)
+
+// Valid indicates whether the value is a known member of the SyncStatusStatus enum.
+func (e SyncStatusStatus) Valid() bool {
+	switch e {
+	case Degraded:
+		return true
+	case Healthy:
+		return true
+	case Unreachable:
 		return true
 	default:
 		return false
@@ -242,6 +311,44 @@ type ProviderList struct {
 // ProviderType defines model for ProviderType.
 type ProviderType string
 
+// Resource defines model for Resource.
+type Resource struct {
+	Arch       ResourceArch `json:"arch"`
+	ExternalId string       `json:"externalId"`
+
+	// ExternalScope Provider-side owner scope (OpenStack project, PVE pool).
+	ExternalScope string       `json:"externalScope"`
+	FirstSeenAt   time.Time    `json:"firstSeenAt"`
+	Kind          ResourceKind `json:"kind"`
+	Name          string       `json:"name"`
+
+	// ObservedAt When the provider last reported this state (data age).
+	ObservedAt time.Time  `json:"observedAt"`
+	OrphanedAt *time.Time `json:"orphanedAt,omitempty"`
+
+	// ProjectId Examples: os-jkt
+	ProjectId *EntityId `json:"projectId,omitempty"`
+
+	// ProviderId Examples: os-jkt
+	ProviderId EntityId `json:"providerId"`
+
+	// Spec Kind-specific attributes (vcpus, memoryMiB, ipAddresses, sizeGiB, …).
+	Spec   map[string]interface{} `json:"spec"`
+	Status string                 `json:"status"`
+}
+
+// ResourceArch defines model for Resource.Arch.
+type ResourceArch string
+
+// ResourceKind defines model for ResourceKind.
+type ResourceKind string
+
+// ResourceList defines model for ResourceList.
+type ResourceList struct {
+	Items      []Resource `json:"items"`
+	NextCursor *string    `json:"nextCursor,omitempty"`
+}
+
 // Role defines model for Role.
 type Role string
 
@@ -285,6 +392,22 @@ type Status struct {
 	Status string `json:"status"`
 }
 
+// SyncStatus defines model for SyncStatus.
+type SyncStatus struct {
+	ConsecutiveFailures int        `json:"consecutiveFailures"`
+	LastAttemptAt       time.Time  `json:"lastAttemptAt"`
+	LastError           string     `json:"lastError"`
+	LastObservedAt      *time.Time `json:"lastObservedAt,omitempty"`
+	LastSuccessAt       *time.Time `json:"lastSuccessAt,omitempty"`
+
+	// ProviderId Examples: os-jkt
+	ProviderId EntityId         `json:"providerId"`
+	Status     SyncStatusStatus `json:"status"`
+}
+
+// SyncStatusStatus defines model for SyncStatus.Status.
+type SyncStatusStatus string
+
 // VersionInfo defines model for VersionInfo.
 type VersionInfo struct {
 	Commit    string `json:"commit"`
@@ -305,6 +428,18 @@ type ProviderId = EntityId
 type DeleteCredentialParams struct {
 	Purpose CredentialPurpose `form:"purpose" json:"purpose"`
 	Scope   string            `form:"scope" json:"scope"`
+}
+
+// ListResourcesParams defines parameters for ListResources.
+type ListResourcesParams struct {
+	Kind            ResourceKind `form:"kind" json:"kind"`
+	ProviderId      *EntityId    `form:"providerId,omitempty" json:"providerId,omitempty"`
+	ProjectId       *EntityId    `form:"projectId,omitempty" json:"projectId,omitempty"`
+	IncludeOrphaned *bool        `form:"includeOrphaned,omitempty" json:"includeOrphaned,omitempty"`
+	Limit           *int         `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `nextCursor`.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
@@ -369,6 +504,12 @@ type ServerInterface interface {
 	// PutCredential Store or replace a credential (write-only)
 	// (PUT /api/v1/providers/{providerId}/credentials)
 	PutCredential(w http.ResponseWriter, r *http.Request, providerId ProviderId)
+	// GetProviderSyncStatus Last inventory sync outcome of a provider
+	// (GET /api/v1/providers/{providerId}/sync-status)
+	GetProviderSyncStatus(w http.ResponseWriter, r *http.Request, providerId ProviderId)
+	// ListResources List cached inventory resources the caller may see
+	// (GET /api/v1/resources)
+	ListResources(w http.ResponseWriter, r *http.Request, params ListResourcesParams)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(w http.ResponseWriter, r *http.Request)
@@ -704,6 +845,130 @@ func (siw *ServerInterfaceWrapper) PutCredential(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetProviderSyncStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetProviderSyncStatus(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "providerId" -------------
+	var providerId ProviderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "providerId", r.PathValue("providerId"), &providerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "providerId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProviderSyncStatus(w, r, providerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListResources operation middleware
+func (siw *ServerInterfaceWrapper) ListResources(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListResourcesParams
+
+	// ------------- Required query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "providerId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "providerId", r.URL.Query(), &params.ProviderId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "providerId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "providerId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "projectId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "projectId", r.URL.Query(), &params.ProjectId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "projectId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "includeOrphaned" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "includeOrphaned", r.URL.Query(), &params.IncludeOrphaned, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "includeOrphaned"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "includeOrphaned", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListResources(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListSites operation middleware
 func (siw *ServerInterfaceWrapper) ListSites(w http.ResponseWriter, r *http.Request) {
 
@@ -913,6 +1178,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.DeleteCredential)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.ListCredentials)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.PutCredential)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/resources", wrapper.ListResources)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers/{providerId}/sync-status", wrapper.GetProviderSyncStatus)
 
 	return m
 }
@@ -1464,6 +1731,84 @@ func (response PutCredentialdefaultApplicationProblemPlusJSONResponse) VisitPutC
 	return err
 }
 
+type GetProviderSyncStatusRequestObject struct {
+	ProviderId ProviderId `json:"providerId"`
+}
+
+type GetProviderSyncStatusResponseObject interface {
+	VisitGetProviderSyncStatusResponse(w http.ResponseWriter) error
+}
+
+type GetProviderSyncStatus200JSONResponse SyncStatus
+
+func (response GetProviderSyncStatus200JSONResponse) VisitGetProviderSyncStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProviderSyncStatusdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetProviderSyncStatusdefaultApplicationProblemPlusJSONResponse) VisitGetProviderSyncStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListResourcesRequestObject struct {
+	Params ListResourcesParams
+}
+
+type ListResourcesResponseObject interface {
+	VisitListResourcesResponse(w http.ResponseWriter) error
+}
+
+type ListResources200JSONResponse ResourceList
+
+func (response ListResources200JSONResponse) VisitListResourcesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListResourcesdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListResourcesdefaultApplicationProblemPlusJSONResponse) VisitListResourcesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListSitesRequestObject struct {
 }
 
@@ -1681,6 +2026,12 @@ type StrictServerInterface interface {
 	// PutCredential Store or replace a credential (write-only)
 	// (PUT /api/v1/providers/{providerId}/credentials)
 	PutCredential(ctx context.Context, request PutCredentialRequestObject) (PutCredentialResponseObject, error)
+	// GetProviderSyncStatus Last inventory sync outcome of a provider
+	// (GET /api/v1/providers/{providerId}/sync-status)
+	GetProviderSyncStatus(ctx context.Context, request GetProviderSyncStatusRequestObject) (GetProviderSyncStatusResponseObject, error)
+	// ListResources List cached inventory resources the caller may see
+	// (GET /api/v1/resources)
+	ListResources(ctx context.Context, request ListResourcesRequestObject) (ListResourcesResponseObject, error)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(ctx context.Context, request ListSitesRequestObject) (ListSitesResponseObject, error)
@@ -2116,6 +2467,58 @@ func (sh *strictHandler) PutCredential(w http.ResponseWriter, r *http.Request, p
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutCredentialResponseObject); ok {
 		if err := validResponse.VisitPutCredentialResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetProviderSyncStatus operation middleware
+func (sh *strictHandler) GetProviderSyncStatus(w http.ResponseWriter, r *http.Request, providerId ProviderId) {
+	var request GetProviderSyncStatusRequestObject
+
+	request.ProviderId = providerId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetProviderSyncStatus(ctx, request.(GetProviderSyncStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetProviderSyncStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetProviderSyncStatusResponseObject); ok {
+		if err := validResponse.VisitGetProviderSyncStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListResources operation middleware
+func (sh *strictHandler) ListResources(w http.ResponseWriter, r *http.Request, params ListResourcesParams) {
+	var request ListResourcesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListResources(ctx, request.(ListResourcesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListResources")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListResourcesResponseObject); ok {
+		if err := validResponse.VisitListResourcesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

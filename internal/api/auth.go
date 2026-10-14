@@ -67,6 +67,9 @@ var operationAccess = map[string]access{
 	"ListCredentials":      accessAdmin,
 	"PutCredential":        accessAdmin,
 	"DeleteCredential":     accessAdmin,
+	// Scoped per caller inside the handler (visibilityFor).
+	"ListResources":         accessAuthenticated,
+	"GetProviderSyncStatus": accessAuthenticated,
 }
 
 // authorize is a strict-server middleware enforcing operationAccess.
