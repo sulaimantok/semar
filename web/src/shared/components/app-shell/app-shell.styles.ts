@@ -1,7 +1,8 @@
 export const appShellStyles = {
   root: "min-h-dvh md:grid md:grid-cols-[15rem_1fr]",
   sidebar:
-    "border-b border-border bg-panel md:sticky md:top-0 md:h-dvh md:border-b-0 md:border-r",
+    "flex flex-col border-b border-border bg-panel md:sticky md:top-0 md:h-dvh md:border-b-0 md:border-r",
+  footer: "mt-auto border-t border-border px-3 py-3",
   brand: "flex items-center gap-2 px-5 py-4",
   brandMark: "grid size-8 place-items-center rounded-lg bg-accent text-sm font-bold text-white",
   brandName: "text-base font-semibold tracking-wide",

@@ -20,7 +20,7 @@ export interface INavItem {
 /** Navigation by resource type (roadmap §3.5). */
 export const NAV_ITEMS: readonly INavItem[] = [
   { label: "Overview", to: "/", icon: LayoutDashboard, released: true },
-  { label: "Compute", to: "/compute", icon: Server, released: false },
+  { label: "Compute", to: "/compute", icon: Server, released: true },
   { label: "Kubernetes", to: "/kubernetes", icon: Boxes, released: false },
   { label: "Network", to: "/network", icon: Network, released: false },
   { label: "Storage", to: "/storage", icon: HardDrive, released: false },

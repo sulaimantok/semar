@@ -9,7 +9,7 @@
 | Phase | Scope | State |
 |---|---|---|
 | 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment and spikes S1–S3 |
-| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status). Next: inventory API with project-scoped RBAC, OpenStack/Proxmox drivers, console proxy, UI pages |
+| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, web sign-in and VM list. Next: OpenStack/Proxmox drivers, capacity overview, Settings UI, console proxy |
 | 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
 
 ## What's Here
@@ -24,7 +24,7 @@
 | Driver contract | `internal/driver/contract` | Provider-neutral model + read-only `CloudDriver` interface |
 | Contract test suite | `internal/driver/contracttest` | Run by every driver (Fake on each PR, lab nightly) |
 | Fake Driver | `internal/driver/fake` | Deterministic inventory + fault injection (latency, error rate, fail-next) |
-| Web UI | `web/` | React + Vite + TypeScript + Tailwind; module-based layout, API types generated from the spec (see `web/README.md`) |
+| Web UI | `web/` | React + Vite + TypeScript + Tailwind; sign-in, overview and Compute (VM list); module-based layout, API types generated from the spec (see `web/README.md`) |
 | Store | `internal/store`, `internal/model`, `internal/secret` | PostgreSQL (pgx) with embedded goose migrations: sites, projects, providers, project mappings, users, sessions, role bindings, append-only hash-chained audit log, inventory cache with change history and sync status; credentials sealed with envelope encryption (ADR-0004) |
 | Lite profile | `deploy/compose/` | PostgreSQL + Temporal + UI + SEMAR (development only) |
 | ADRs & spikes | `docs/adr/`, `docs/spikes/` | ADR-0001 … ADR-0007, spike S4 |
@@ -82,6 +82,8 @@ The full contract is [`api/openapi.yaml`](api/openapi.yaml).
 | `GET /api/v1/sites`, `/projects`, `/projects/{id}/mappings`, `/providers`, `/providers/{id}` | signed in |
 | `POST` sites, projects, mappings, providers; `DELETE /providers/{id}` | admin |
 | `GET/PUT/DELETE /api/v1/providers/{id}/credentials` | admin (secrets are write-only) |
+| `GET /api/v1/resources?kind=vm\|hypervisor\|image\|network\|volume` | signed in; scoped to the caller's role bindings (see below) |
+| `GET /api/v1/providers/{id}/sync-status` | signed in |
 
 ### Authentication and audit
 
@@ -145,6 +147,8 @@ The worker serves one site (`SEMAR_SITE_ID`; providers without a site belong to 
 - every create, change, orphaning and restore is appended to `resource_changes`.
 
 Until the OpenStack and Proxmox drivers land, only providers of type `fake` can be synced.
+
+`GET /api/v1/resources` serves the cache, never the providers, and applies RBAC in the query: global admins and operators see every resource (including those not mapped to a project), global viewers see every resource that belongs to a project, and project- or provider-scoped bindings see only their scope. Hypervisors belong to no project and are visible to global bindings only.
 
 ## Adding a Provider Driver
 

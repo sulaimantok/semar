@@ -56,6 +56,7 @@ func newAnonymousAPI(t *testing.T) *settingsAPI {
 		Audit:       st,
 		Credentials: st,
 		Secrets:     keyring,
+		Inventory:   st,
 	})}
 }
 

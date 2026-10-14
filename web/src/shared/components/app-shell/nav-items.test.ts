@@ -5,8 +5,7 @@ import { NAV_ITEMS, visibleNavItems } from "./nav-items";
 describe("visibleNavItems", () => {
   it("hides unreleased features", () => {
     const labels = visibleNavItems().map((item) => item.label);
-    expect(labels).toContain("Overview");
-    expect(labels).not.toContain("Compute");
+    expect(labels).toEqual(["Overview", "Compute"]);
   });
 
   it("keeps the resource-type order", () => {

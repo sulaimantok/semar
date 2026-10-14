@@ -45,6 +45,8 @@ type Options struct {
 	MaxBodyBytes int64
 	// LoginLimits bounds login attempts and concurrent password hashing.
 	LoginLimits LoginLimits
+	// Inventory backs the read-only inventory endpoints.
+	Inventory InventoryReader
 }
 
 // NewHandler returns the root HTTP handler with middleware applied.

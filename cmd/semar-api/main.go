@@ -92,6 +92,7 @@ func run() error {
 			CookieSecure: cfg.CookieSecure,
 			Credentials:  st,
 			Secrets:      keyring,
+			Inventory:    st,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
