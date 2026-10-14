@@ -82,6 +82,7 @@ services:
       SEMAR_TEMPORAL_NAMESPACE: ${SEMAR_TEMPORAL_NAMESPACE:-semar}
       SEMAR_SITE_ID: ${SEMAR_SITE_ID:-default}
       SEMAR_SYNC_INTERVAL: ${SEMAR_SYNC_INTERVAL:-60s}
+      SEMAR_DATABASE_URL: postgres://${POSTGRES_USER:-semar}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/semar?sslmode=disable
       SEMAR_PAYLOAD_KEY_ID: ${SEMAR_PAYLOAD_KEY_ID:-k1}
       SEMAR_PAYLOAD_KEY: ${SEMAR_PAYLOAD_KEY:?set SEMAR_PAYLOAD_KEY in .env}
       # During key rotation: "k1=<old base64 key>" (comma-separated).
@@ -89,6 +90,8 @@ services:
     depends_on:
       temporal-namespace:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   semar-api:

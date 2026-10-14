@@ -1,5 +1,5 @@
-// Command semar-worker runs SEMAR's Temporal workers and keeps the
-// per-provider sync schedules in place.
+// Command semar-worker runs SEMAR's Temporal workers for one site and keeps
+// the per-provider sync schedules in line with the registered providers.
 package main
 
 import (
@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"go.temporal.io/sdk/client"
@@ -14,7 +16,7 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	"github.com/sulaimantok/semar/internal/config"
-	"github.com/sulaimantok/semar/internal/driver/fake"
+	"github.com/sulaimantok/semar/internal/store"
 	"github.com/sulaimantok/semar/internal/version"
 	"github.com/sulaimantok/semar/internal/workflow"
 )
@@ -33,6 +35,15 @@ func run() error {
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	st, err := store.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
 	codec, err := workflow.NewAESGCMCodec(cfg.PayloadKeyID, cfg.PayloadKeys)
 	if err != nil {
 		return err
@@ -48,30 +59,65 @@ func run() error {
 	}
 	defer c.Close()
 
-	// Until providers are loaded from the database, sync Fake Driver providers.
-	drivers := workflow.StaticDrivers{}
-	var seed uint64
-	for _, id := range cfg.FakeProviders {
-		seed++
-		drivers[id] = fake.New(fake.Config{Seed: seed})
-	}
-
 	taskQueue := workflow.TaskQueueForSite(cfg.SiteID)
 	w := worker.New(c, taskQueue, worker.Options{})
 	w.RegisterWorkflow(workflow.SyncProviderWorkflow)
-	w.RegisterActivity(&workflow.Activities{Drivers: drivers})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	for id := range drivers {
-		if err := workflow.EnsureSyncSchedule(ctx, c, id, taskQueue, cfg.SyncInterval); err != nil {
-			return err
-		}
-		log.Info("sync schedule ensured", "provider", id, "every", cfg.SyncInterval.String())
+	w.RegisterActivity(&workflow.Activities{
+		Drivers:     workflow.RegisteredDrivers{Providers: st},
+		Inventory:   st,
+		OrphanAfter: cfg.OrphanAfter,
+	})
+	if err := w.Start(); err != nil {
+		return fmt.Errorf("start worker: %w", err)
 	}
+	defer w.Stop()
 
 	info := version.Get()
 	log.Info("starting semar-worker", "task_queue", taskQueue, "namespace", cfg.TemporalNamespace,
 		"version", info.Version, "commit", info.Commit)
-	return w.Run(worker.InterruptCh())
+
+	// Rewrite existing schedules on start (re-encrypts them after a payload
+	// key rotation), then only add missing and drop removed ones.
+	reconcileSchedules(ctx, log, st, c, cfg, taskQueue, true)
+	ticker := time.NewTicker(cfg.ReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("shutting down")
+			return nil
+		case <-ticker.C:
+			reconcileSchedules(ctx, log, st, c, cfg, taskQueue, false)
+		}
+	}
+}
+
+// reconcileSchedules logs failures instead of exiting: the database or
+// Temporal may be briefly unavailable (e.g. while semar-api migrates).
+func reconcileSchedules(ctx context.Context, log *slog.Logger, st *store.Store, c client.Client, cfg config.Worker, taskQueue string, rewrite bool) {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	providers, err := st.ListProviders(ctx)
+	if err != nil {
+		log.Error("list providers for schedule reconciliation", "error", err)
+		return
+	}
+	var own, active []string
+	for _, p := range providers {
+		active = append(active, p.ID)
+		site := p.SiteID
+		if site == "" {
+			site = "default"
+		}
+		if site == cfg.SiteID {
+			own = append(own, p.ID)
+		}
+	}
+	res, err := workflow.ReconcileSchedules(ctx, c, taskQueue, cfg.SyncInterval, own, active, rewrite)
+	if err != nil {
+		log.Error("reconcile sync schedules", "error", err)
+	}
+	if len(res.Ensured) > 0 || len(res.Removed) > 0 {
+		log.Info("sync schedules reconciled", "ensured", res.Ensured, "removed", res.Removed)
+	}
 }
