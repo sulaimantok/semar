@@ -97,8 +97,14 @@ func mapErr(err error) error {
 			return fmt.Errorf("%w: %s", ErrConflict, pgErr.ConstraintName)
 		case "23503": // foreign_key_violation
 			return fmt.Errorf("%w: %s", ErrInvalidReference, pgErr.ConstraintName)
-		case "23514", "23502", "22P02": // check, not null, invalid text representation
-			return fmt.Errorf("%w: %s", ErrInvalid, pgErr.Message)
+		// Only constraint/column names are surfaced: PostgreSQL's messages
+		// would expose table names and values to API clients.
+		case "23514": // check_violation
+			return fmt.Errorf("%w: violates %s", ErrInvalid, pgErr.ConstraintName)
+		case "23502": // not_null_violation
+			return fmt.Errorf("%w: %s is required", ErrInvalid, pgErr.ColumnName)
+		case "22P02": // invalid_text_representation
+			return fmt.Errorf("%w: malformed value", ErrInvalid)
 		}
 	}
 	return err

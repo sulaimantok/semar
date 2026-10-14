@@ -43,6 +43,8 @@ type Options struct {
 	Secrets     secret.Store
 	// MaxBodyBytes limits request bodies. Defaults to 1 MiB.
 	MaxBodyBytes int64
+	// LoginLimits bounds login attempts and concurrent password hashing.
+	LoginLimits LoginLimits
 }
 
 // NewHandler returns the root HTTP handler with middleware applied.
@@ -60,7 +62,7 @@ func NewHandler(opts Options) http.Handler {
 		opts.MaxBodyBytes = 1 << 20
 	}
 	log := opts.Logger
-	srv := &server{opts: opts}
+	srv := &server{opts: opts, logins: newLoginLimiter(opts.LoginLimits)}
 
 	strict := gen.NewStrictHandlerWithOptions(srv, []gen.StrictMiddlewareFunc{srv.authorize}, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -90,13 +92,15 @@ func NewHandler(opts Options) http.Handler {
 	h = withCSRFProtection(h)
 	h = withBodyLimit(opts.MaxBodyBytes, h)
 	h = withAccessLog(log, h)
+	h = withClientIP(h)
 	h = withRequestID(h)
 	return h
 }
 
 // server implements gen.StrictServerInterface.
 type server struct {
-	opts Options
+	opts   Options
+	logins *loginLimiter
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)
