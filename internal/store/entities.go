@@ -141,9 +141,17 @@ func (s *Store) ListProviders(ctx context.Context) ([]model.Provider, error) {
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (model.Provider, error) { return scanProvider(r) })
 }
 
-// DeleteProvider soft-deletes a provider so its history stays intact.
+// DeleteProvider soft-deletes a provider so its history stays intact, and
+// deletes its credentials in the same transaction: secrets for a cloud SEMAR
+// no longer manages must not linger.
 func (s *Store) DeleteProvider(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx,
 		`UPDATE providers SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL`, id)
 	if err != nil {
 		return mapErr(err)
@@ -151,7 +159,10 @@ func (s *Store) DeleteProvider(ctx context.Context, id string) error {
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	if _, err := tx.Exec(ctx, `DELETE FROM provider_credentials WHERE provider_id = $1`, id); err != nil {
+		return mapErr(err)
+	}
+	return mapErr(tx.Commit(ctx))
 }
 
 // CreateProjectMapping maps an external scope to a project. Mapping a scope

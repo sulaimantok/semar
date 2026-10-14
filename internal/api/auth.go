@@ -186,7 +186,21 @@ func (s *server) Login(ctx context.Context, req gen.LoginRequestObject) (gen.Log
 	if req.Body == nil {
 		return fail(http.StatusBadRequest, "username and password are required")
 	}
-	username := strings.ToLower(strings.TrimSpace(req.Body.Username))
+	username := actorFromInput(req.Body.Username)
+
+	// Limits are checked before any password hashing so that refused
+	// attempts cost neither CPU nor memory. Refusals are logged, not
+	// audited, to avoid turning a flood into database writes.
+	if !s.logins.allowAttempt(clientIPFrom(ctx), username) {
+		s.opts.Logger.WarnContext(ctx, "login rate limited",
+			slog.String("user", username), slog.String("client_ip", clientIPFrom(ctx)))
+		return fail(http.StatusTooManyRequests, "too many login attempts; try again later")
+	}
+	release, err := s.logins.acquireHashSlot(ctx)
+	if err != nil {
+		return fail(http.StatusServiceUnavailable, "login temporarily unavailable")
+	}
+	defer release()
 
 	u, err := s.opts.Auth.UserByUsername(ctx, username)
 	ok := false
@@ -204,9 +218,11 @@ func (s *server) Login(ctx context.Context, req gen.LoginRequestObject) (gen.Log
 		return fail(http.StatusInternalServerError, "")
 	}
 	if !ok {
-		_ = s.audit(ctx, actorFromInput(username), "auth.login", username, store.AuditFailure, nil)
+		s.logins.recordFailure(username)
+		_ = s.audit(ctx, username, "auth.login", username, store.AuditFailure, nil)
 		return fail(http.StatusUnauthorized, "invalid username or password")
 	}
+	s.logins.recordSuccess(username)
 
 	token, hash, err := auth.NewSessionToken()
 	if err != nil {

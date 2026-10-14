@@ -135,3 +135,35 @@ func TestSettingsMutationsAreAudited(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLoginIsRateLimited(t *testing.T) {
+	a := newAnonymousAPI(t)
+	for i := 0; i < 5; i++ {
+		a.expect(a.login("admin", "wrong-password-123"), http.StatusUnauthorized, nil)
+	}
+	// The username is now locked, even with the right password.
+	a.expect(a.login("admin", adminPassword), http.StatusTooManyRequests, nil)
+	if a.cookie != nil {
+		t.Fatal("locked account received a session")
+	}
+	// The per-address limit (10/min) also applies to other usernames. The
+	// refused attempt above was stopped by the username lock before it
+	// counted against the address, so 5 more attempts exhaust it.
+	for i := 0; i < 5; i++ {
+		a.expect(a.login("someone", "whatever-password"), http.StatusUnauthorized, nil)
+	}
+	a.expect(a.login("someone-else", "whatever-password"), http.StatusTooManyRequests, nil)
+}
+
+func TestFailedLoginAuditBoundsAttackerInput(t *testing.T) {
+	a := newAnonymousAPI(t)
+	long := strings.Repeat("x", 10_000)
+	a.expect(a.login(long, "whatever-password"), http.StatusUnauthorized, nil)
+	events, err := a.st.ListAuditEvents(context.Background(), 0, 0)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events = %d, %v", len(events), err)
+	}
+	if len(events[0].Actor) > maxActorLen || len(events[0].Target) > maxActorLen {
+		t.Fatalf("audit stored %d/%d bytes of attacker input", len(events[0].Actor), len(events[0].Target))
+	}
+}

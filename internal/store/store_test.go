@@ -138,8 +138,15 @@ func TestProviderLifecycle(t *testing.T) {
 		t.Fatalf("no endpoints: %v, want ErrInvalid", err)
 	}
 
+	if _, err := st.PutCredential(ctx, keyring(t, "v1"), model.ProviderCredential{ProviderID: "os-jkt", Purpose: model.PurposeDiscovery, Scope: "provider"}, []byte("s")); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.DeleteProvider(ctx, "os-jkt"); err != nil {
 		t.Fatal(err)
+	}
+	// Removing a provider removes its secrets.
+	if creds, err := st.ListCredentials(ctx, "os-jkt"); err != nil || len(creds) != 0 {
+		t.Fatalf("credentials after provider delete = %d, %v", len(creds), err)
 	}
 	if _, err := st.GetProvider(ctx, "os-jkt"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("get deleted: %v, want ErrNotFound", err)

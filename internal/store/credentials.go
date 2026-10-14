@@ -114,19 +114,37 @@ func (s *Store) OpenCredential(ctx context.Context, ks secret.Store, providerID 
 	return c, plaintext, nil
 }
 
+// ErrRewrapIncomplete is returned when credentials still use an old KEK
+// after a rewrap pass (for example because they were locked by a concurrent
+// write). Old KEKs must not be removed until a rewrap succeeds.
+var ErrRewrapIncomplete = errors.New("store: credentials remain on a previous KEK")
+
 // RewrapCredentials rewraps every credential not sealed with ks's current
 // KEK, in batches, and returns how many were rewrapped. Ciphertexts are not
-// touched (ADR-0004). It is safe to run concurrently with other writers.
+// touched (ADR-0004). It is safe to run concurrently with other writers; it
+// fails with ErrRewrapIncomplete if any credential is left on an old KEK.
 func (s *Store) RewrapCredentials(ctx context.Context, ks secret.Store) (int, error) {
 	const batch = 100
 	total := 0
 	for {
 		n, err := s.rewrapBatch(ctx, ks, batch)
 		total += n
-		if err != nil || n < batch {
+		if err != nil {
 			return total, err
 		}
+		if n < batch {
+			break
+		}
 	}
+	var remaining int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM provider_credentials WHERE kek_version <> $1`, ks.CurrentVersion()).Scan(&remaining); err != nil {
+		return total, mapErr(err)
+	}
+	if remaining > 0 {
+		return total, fmt.Errorf("%w: %d credentials; run the rewrap again", ErrRewrapIncomplete, remaining)
+	}
+	return total, nil
 }
 
 func (s *Store) rewrapBatch(ctx context.Context, ks secret.Store, limit int) (int, error) {
