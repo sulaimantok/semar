@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -12,7 +13,7 @@ import (
 )
 
 // SyncScheduleID is the Schedule ID for a provider's inventory sync.
-func SyncScheduleID(providerID string) string { return "sync-" + providerID }
+func SyncScheduleID(providerID string) string { return syncSchedulePrefix + providerID }
 
 // EnsureSyncSchedule creates or updates the provider's sync Schedule. Overlap
 // policy SKIP makes the sync a singleton: a run that is still in progress
@@ -62,4 +63,98 @@ func EnsureSyncSchedule(ctx context.Context, c client.Client, providerID, taskQu
 		return fmt.Errorf("update sync schedule %s: %w", id, err)
 	}
 	return nil
+}
+
+// syncSchedulePrefix marks schedules owned by SEMAR's inventory sync.
+const syncSchedulePrefix = "sync-"
+
+// scheduleOps is what schedule reconciliation needs from Temporal.
+type scheduleOps interface {
+	ensure(ctx context.Context, providerID string) error
+	list(ctx context.Context) ([]string, error)
+	remove(ctx context.Context, scheduleID string) error
+}
+
+type temporalSchedules struct {
+	c         client.Client
+	taskQueue string
+	every     time.Duration
+}
+
+func (t temporalSchedules) ensure(ctx context.Context, providerID string) error {
+	return EnsureSyncSchedule(ctx, t.c, providerID, t.taskQueue, t.every)
+}
+
+func (t temporalSchedules) list(ctx context.Context) ([]string, error) {
+	it, err := t.c.ScheduleClient().List(ctx, client.ScheduleListOptions{PageSize: 100})
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for it.HasNext() {
+		e, err := it.Next()
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, e.ID)
+	}
+	return ids, nil
+}
+
+func (t temporalSchedules) remove(ctx context.Context, scheduleID string) error {
+	return t.c.ScheduleClient().GetHandle(ctx, scheduleID).Delete(ctx)
+}
+
+// ReconcileResult reports what a reconciliation changed.
+type ReconcileResult struct {
+	Ensured []string
+	Removed []string
+}
+
+// ReconcileSchedules makes Temporal's sync schedules match the database:
+//   - own lists the active providers served by this worker's site; each gets
+//     a schedule (rewriteExisting also rewrites schedules that exist, which
+//     re-encrypts their payload after a key rotation — do it on start);
+//   - active lists the active providers of every site; sync schedules for
+//     any other provider (removed from SEMAR) are deleted.
+func ReconcileSchedules(ctx context.Context, c client.Client, taskQueue string, every time.Duration, own, active []string, rewriteExisting bool) (ReconcileResult, error) {
+	return reconcile(ctx, temporalSchedules{c: c, taskQueue: taskQueue, every: every}, own, active, rewriteExisting)
+}
+
+func reconcile(ctx context.Context, ops scheduleOps, own, active []string, rewriteExisting bool) (ReconcileResult, error) {
+	var res ReconcileResult
+	existing, err := ops.list(ctx)
+	if err != nil {
+		return res, fmt.Errorf("list schedules: %w", err)
+	}
+	have := make(map[string]bool, len(existing))
+	for _, id := range existing {
+		have[id] = true
+	}
+	var errs []error
+	for _, p := range own {
+		if have[SyncScheduleID(p)] && !rewriteExisting {
+			continue
+		}
+		if err := ops.ensure(ctx, p); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		res.Ensured = append(res.Ensured, p)
+	}
+	keep := make(map[string]bool, len(active))
+	for _, p := range active {
+		keep[SyncScheduleID(p)] = true
+	}
+	for _, id := range existing {
+		if !strings.HasPrefix(id, syncSchedulePrefix) || keep[id] {
+			continue
+		}
+		if err := ops.remove(ctx, id); err != nil {
+			errs = append(errs, fmt.Errorf("delete schedule %s: %w", id, err))
+			continue
+		}
+		res.Removed = append(res.Removed, id)
+	}
+	return res, errors.Join(errs...)
 }

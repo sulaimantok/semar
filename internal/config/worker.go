@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,9 +22,15 @@ type Worker struct {
 	// PayloadKeys holds the current key and any previous keys still needed to
 	// decrypt existing payloads during rotation.
 	PayloadKeys map[string][]byte
-	// FakeProviders lists Fake Driver provider IDs to sync (development until
-	// providers are loaded from the database).
-	FakeProviders []string
+	// DatabaseURL is the PostgreSQL URL providers are read from and the
+	// inventory is written to (required).
+	DatabaseURL string
+	// OrphanAfter is how many consecutive syncs a resource may be missing
+	// before it is marked orphaned.
+	OrphanAfter int
+	// ReconcileInterval is how often sync schedules are reconciled with the
+	// providers in the database.
+	ReconcileInterval time.Duration
 }
 
 // LoadWorker reads SEMAR_* variables via getenv (os.Getenv in production).
@@ -36,7 +43,26 @@ func LoadWorker(getenv func(string) string) (Worker, error) {
 		SyncInterval:      60 * time.Second,
 		PayloadKeyID:      "k1",
 		PayloadKeys:       map[string][]byte{},
-		FakeProviders:     []string{"fake-1"},
+		OrphanAfter:       3,
+		ReconcileInterval: time.Minute,
+	}
+	cfg.DatabaseURL = getenv("SEMAR_DATABASE_URL")
+	if cfg.DatabaseURL == "" {
+		return Worker{}, errors.New("SEMAR_DATABASE_URL is required (postgres://user:password@host:5432/semar)")
+	}
+	if v := getenv("SEMAR_ORPHAN_AFTER"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 100 {
+			return Worker{}, fmt.Errorf("SEMAR_ORPHAN_AFTER: want an integer between 1 and 100, got %q", v)
+		}
+		cfg.OrphanAfter = n
+	}
+	if v := getenv("SEMAR_SCHEDULE_RECONCILE_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 10*time.Second {
+			return Worker{}, fmt.Errorf("SEMAR_SCHEDULE_RECONCILE_INTERVAL: want a duration of at least 10s, got %q", v)
+		}
+		cfg.ReconcileInterval = d
 	}
 	setString(getenv, "SEMAR_TEMPORAL_ADDRESS", &cfg.TemporalAddress)
 	setString(getenv, "SEMAR_TEMPORAL_NAMESPACE", &cfg.TemporalNamespace)
@@ -65,14 +91,6 @@ func LoadWorker(getenv func(string) string) (Worker, error) {
 	}
 	cfg.PayloadKeys = keys
 
-	if v := getenv("SEMAR_FAKE_PROVIDERS"); v != "" {
-		cfg.FakeProviders = nil
-		for _, p := range strings.Split(v, ",") {
-			if p = strings.TrimSpace(p); p != "" {
-				cfg.FakeProviders = append(cfg.FakeProviders, p)
-			}
-		}
-	}
 	return cfg, nil
 }
 

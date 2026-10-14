@@ -9,7 +9,7 @@
 | Phase | Scope | State |
 |---|---|---|
 | 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment and spikes S1–S3 |
-| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation. Next: inventory persistence, OpenStack/Proxmox drivers, console proxy, UI pages |
+| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status). Next: inventory API with project-scoped RBAC, OpenStack/Proxmox drivers, console proxy, UI pages |
 | 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
 
 ## What's Here
@@ -19,13 +19,13 @@
 | API server | `cmd/semar-api`, `internal/api` | Health/readiness/version, Settings, auth and credential endpoints; RFC 9457 errors; `X-Request-ID`; CSRF protection; 1 MiB body limit |
 | Auth | `internal/auth`, `internal/api/auth.go` | Local users (argon2id), server-side sessions, role bindings, per-operation access policies (fail closed) |
 | Generated API layer | `internal/api/gen` | Strict `net/http` server generated from the spec (`go generate ./...`) |
-| Worker | `cmd/semar-worker`, `internal/workflow` | Temporal worker: per-provider sync Schedules, AES-256-GCM payload codec with key rotation |
+| Worker | `cmd/semar-worker`, `internal/workflow` | Temporal worker: per-provider sync Schedules reconciled with the registered providers, inventory persisted to PostgreSQL, AES-256-GCM payload codec with key rotation |
 | OpenAPI contract | `api/openapi.yaml` | Source of truth for the frontend ↔ backend contract |
 | Driver contract | `internal/driver/contract` | Provider-neutral model + read-only `CloudDriver` interface |
 | Contract test suite | `internal/driver/contracttest` | Run by every driver (Fake on each PR, lab nightly) |
 | Fake Driver | `internal/driver/fake` | Deterministic inventory + fault injection (latency, error rate, fail-next) |
 | Web UI | `web/` | React + Vite + TypeScript + Tailwind; module-based layout, API types generated from the spec (see `web/README.md`) |
-| Store | `internal/store`, `internal/model`, `internal/secret` | PostgreSQL (pgx) with embedded goose migrations: sites, projects, providers, project mappings, users, sessions, role bindings, append-only hash-chained audit log; credentials sealed with envelope encryption (ADR-0004) |
+| Store | `internal/store`, `internal/model`, `internal/secret` | PostgreSQL (pgx) with embedded goose migrations: sites, projects, providers, project mappings, users, sessions, role bindings, append-only hash-chained audit log, inventory cache with change history and sync status; credentials sealed with envelope encryption (ADR-0004) |
 | Lite profile | `deploy/compose/` | PostgreSQL + Temporal + UI + SEMAR (development only) |
 | ADRs & spikes | `docs/adr/`, `docs/spikes/` | ADR-0001 … ADR-0007, spike S4 |
 
@@ -130,7 +130,21 @@ In production run semar-api as a non-superuser database role: the append-only gu
 | `SEMAR_PAYLOAD_KEY_ID` | `k1` | ID of the current payload key |
 | `SEMAR_PAYLOAD_KEY` | — (required) | 32-byte AES key, base64 (`openssl rand -base64 32`) |
 | `SEMAR_PAYLOAD_PREVIOUS_KEYS` | — | Keys kept for decryption during rotation: `k0=<base64>,…` |
-| `SEMAR_FAKE_PROVIDERS` | `fake-1` | Fake Driver providers to sync (until providers come from the database) |
+| `SEMAR_DATABASE_URL` | — (required) | PostgreSQL URL; providers are read from and the inventory is written to it |
+| `SEMAR_ORPHAN_AFTER` | `3` | Consecutive syncs a resource may be missing before it is marked orphaned |
+| `SEMAR_SCHEDULE_RECONCILE_INTERVAL` | `1m` | How often sync schedules are reconciled with the registered providers |
+
+### Inventory sync
+
+The worker serves one site (`SEMAR_SITE_ID`; providers without a site belong to `default`). Every `SEMAR_SCHEDULE_RECONCILE_INTERVAL` it creates a Temporal Schedule for each active provider of its site and deletes schedules of removed providers. Each sync lists the provider's full inventory and applies it in one transaction:
+
+- snapshots older than the last applied one are discarded;
+- resources leased by an in-flight operation are left untouched;
+- project ownership is re-derived from project mappings;
+- a resource missing for `SEMAR_ORPHAN_AFTER` consecutive syncs is marked orphaned (never deleted) and restored if it reappears;
+- every create, change, orphaning and restore is appended to `resource_changes`.
+
+Until the OpenStack and Proxmox drivers land, only providers of type `fake` can be synced.
 
 ## Adding a Provider Driver
 
