@@ -47,6 +47,8 @@ var matrixRequests = []struct {
 	{"CreateProvider", matrixRequest{"POST", "/api/v1/providers", `{"id":"prov-m","type":"fake","name":"Matrix","endpoints":["https://fake.example.com"]}`}},
 	{"PutCredential", matrixRequest{"PUT", "/api/v1/providers/pve-lab/credentials", `{"purpose":"discovery","scope":"provider","secret":{"token_id":"t","token_secret":"s"}}`}},
 	{"DeleteCredential", matrixRequest{"DELETE", "/api/v1/providers/pve-lab/credentials?purpose=discovery&scope=provider", ""}},
+	{"UpdateProvider", matrixRequest{"PATCH", "/api/v1/providers/spare", `{"name":"Spare renamed"}`}},
+	{"ValidateProvider", matrixRequest{"POST", "/api/v1/providers/spare/validate", ""}},
 	{"DeleteProvider", matrixRequest{"DELETE", "/api/v1/providers/spare", ""}},
 	{"Logout", matrixRequest{"POST", "/api/v1/auth/logout", ""}},
 }

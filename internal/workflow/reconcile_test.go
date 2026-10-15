@@ -8,7 +8,9 @@ import (
 )
 
 type fakeSchedules struct {
-	ids       []string
+	ids []string
+	// elsewhere holds schedules whose task queue belongs to another site.
+	elsewhere []string
 	ensured   []string
 	removed   []string
 	failFor   string
@@ -28,6 +30,10 @@ func (f *fakeSchedules) ensure(_ context.Context, p string) error {
 
 func (f *fakeSchedules) list(context.Context) ([]string, error) {
 	return slices.Clone(f.ids), f.listError
+}
+
+func (f *fakeSchedules) servedHere(_ context.Context, id string) (bool, error) {
+	return !slices.Contains(f.elsewhere, id), nil
 }
 
 func (f *fakeSchedules) remove(_ context.Context, id string) error {
@@ -69,5 +75,18 @@ func TestReconcileContinuesPastErrors(t *testing.T) {
 	ops = &fakeSchedules{listError: errors.New("temporal down")}
 	if _, err := reconcile(context.Background(), ops, []string{"a"}, []string{"a"}, false); err == nil {
 		t.Fatal("list failure ignored")
+	}
+}
+
+func TestReconcileMovesSchedulesOfProvidersThatChangedSite(t *testing.T) {
+	// "moved" was served by another site's worker and now belongs here; its
+	// schedule must be rewritten onto this site's task queue.
+	ops := &fakeSchedules{ids: []string{"sync-stay", "sync-moved"}, elsewhere: []string{"sync-moved"}}
+	res, err := reconcile(context.Background(), ops, []string{"stay", "moved"}, []string{"stay", "moved"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(res.Ensured, []string{"moved"}) || len(res.Removed) != 0 {
+		t.Fatalf("reconcile = %+v, want only the moved provider rewritten", res)
 	}
 }

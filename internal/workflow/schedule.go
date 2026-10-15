@@ -73,6 +73,9 @@ type scheduleOps interface {
 	ensure(ctx context.Context, providerID string) error
 	list(ctx context.Context) ([]string, error)
 	remove(ctx context.Context, scheduleID string) error
+	// servedHere reports whether an existing schedule starts its workflows
+	// on this worker's task queue.
+	servedHere(ctx context.Context, scheduleID string) (bool, error)
 }
 
 type temporalSchedules struct {
@@ -105,6 +108,15 @@ func (t temporalSchedules) remove(ctx context.Context, scheduleID string) error 
 	return t.c.ScheduleClient().GetHandle(ctx, scheduleID).Delete(ctx)
 }
 
+func (t temporalSchedules) servedHere(ctx context.Context, scheduleID string) (bool, error) {
+	d, err := t.c.ScheduleClient().GetHandle(ctx, scheduleID).Describe(ctx)
+	if err != nil {
+		return false, err
+	}
+	a, ok := d.Schedule.Action.(*client.ScheduleWorkflowAction)
+	return ok && a.TaskQueue == t.taskQueue, nil
+}
+
 // ReconcileResult reports what a reconciliation changed.
 type ReconcileResult struct {
 	Ensured []string
@@ -113,8 +125,10 @@ type ReconcileResult struct {
 
 // ReconcileSchedules makes Temporal's sync schedules match the database:
 //   - own lists the active providers served by this worker's site; each gets
-//     a schedule (rewriteExisting also rewrites schedules that exist, which
-//     re-encrypts their payload after a key rotation — do it on start);
+//     a schedule on this site's task queue. An existing schedule on another
+//     queue (the provider moved to this site) is rewritten; rewriteExisting
+//     rewrites every existing one, which re-encrypts their payload after a
+//     key rotation — do it on start;
 //   - active lists the active providers of every site; sync schedules for
 //     any other provider (removed from SEMAR) are deleted.
 func ReconcileSchedules(ctx context.Context, c client.Client, taskQueue string, every time.Duration, own, active []string, rewriteExisting bool) (ReconcileResult, error) {
@@ -134,7 +148,14 @@ func reconcile(ctx context.Context, ops scheduleOps, own, active []string, rewri
 	var errs []error
 	for _, p := range own {
 		if have[SyncScheduleID(p)] && !rewriteExisting {
-			continue
+			here, err := ops.servedHere(ctx, SyncScheduleID(p))
+			if err != nil {
+				errs = append(errs, fmt.Errorf("describe schedule %s: %w", SyncScheduleID(p), err))
+				continue
+			}
+			if here {
+				continue
+			}
 		}
 		if err := ops.ensure(ctx, p); err != nil {
 			errs = append(errs, err)

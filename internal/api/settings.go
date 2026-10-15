@@ -27,7 +27,10 @@ type SettingsStore interface {
 	ListProviders(ctx context.Context) ([]model.Provider, error)
 	GetProvider(ctx context.Context, id string) (model.Provider, error)
 	CreateProvider(ctx context.Context, p model.Provider) (model.Provider, error)
+	UpdateProvider(ctx context.Context, p model.Provider) (model.Provider, error)
 	DeleteProvider(ctx context.Context, id string) error
+	RecordProviderValidation(ctx context.Context, id, cloudFingerprint string, apiVersions map[string]string) (model.Provider, error)
+	ProviderByCloudFingerprint(ctx context.Context, cloudFingerprint string) (model.Provider, error)
 }
 
 var _ SettingsStore = (*store.Store)(nil)
@@ -317,6 +320,62 @@ func (s *server) createProvider(ctx context.Context, body *gen.ProviderCreate) (
 	return created, err
 }
 
+func (s *server) UpdateProvider(ctx context.Context, req gen.UpdateProviderRequestObject) (gen.UpdateProviderResponseObject, error) {
+	instance := "/api/v1/providers/" + req.ProviderId
+	p, err := s.updateProvider(ctx, req.ProviderId, req.Body)
+	if err != nil {
+		code, prob := s.problemFor(ctx, instance, err)
+		return gen.UpdateProviderdefaultApplicationProblemPlusJSONResponse{StatusCode: code, Body: prob}, nil
+	}
+	return gen.UpdateProvider200JSONResponse(toProvider(p)), nil
+}
+
+func (s *server) updateProvider(ctx context.Context, id string, body *gen.ProviderUpdate) (model.Provider, error) {
+	st, err := s.settings()
+	if err != nil {
+		return model.Provider{}, err
+	}
+	if body == nil || (body.Name == nil && body.SiteId == nil && body.Endpoints == nil && body.RegionName == nil) {
+		return model.Provider{}, badRequest("nothing to update")
+	}
+	p, err := st.GetProvider(ctx, id)
+	if err != nil {
+		return model.Provider{}, err
+	}
+	if body.Name != nil {
+		if p.Name = strings.TrimSpace(*body.Name); p.Name == "" {
+			return model.Provider{}, badRequest("name must not be empty")
+		}
+	}
+	if body.SiteId != nil {
+		// The generated server does not enforce the pattern.
+		if *body.SiteId != "" {
+			if err := model.ValidateID("site", *body.SiteId); err != nil {
+				return model.Provider{}, badRequest("%s", err.Error())
+			}
+		}
+		p.SiteID = *body.SiteId
+	}
+	if body.Endpoints != nil {
+		p.Endpoints = *body.Endpoints
+	}
+	if body.RegionName != nil {
+		p.RegionName = strings.TrimSpace(*body.RegionName)
+	}
+	if p.Fingerprint, err = model.ProviderFingerprint(p.Type, p.Endpoints, p.RegionName); err != nil {
+		return model.Provider{}, badRequest("%s", err.Error())
+	}
+	var updated model.Provider
+	err = s.audited(ctx, "provider.update", id, func() (err error) {
+		updated, err = st.UpdateProvider(ctx, p)
+		return err
+	})
+	if errors.Is(err, store.ErrConflict) {
+		return model.Provider{}, &apiError{status: http.StatusConflict, detail: "another provider is already registered for the same cloud and region"}
+	}
+	return updated, err
+}
+
 func (s *server) GetProvider(ctx context.Context, req gen.GetProviderRequestObject) (gen.GetProviderResponseObject, error) {
 	instance := "/api/v1/providers/" + req.ProviderId
 	st, err := s.settings()
@@ -378,6 +437,15 @@ func toProvider(p model.Provider) gen.Provider {
 	if p.SiteID != "" {
 		site := p.SiteID
 		out.SiteId = &site
+	}
+	if p.CloudFingerprint != "" {
+		fp := p.CloudFingerprint
+		out.CloudFingerprint = &fp
+	}
+	out.ValidatedAt = p.ValidatedAt
+	if len(p.MaxMicroversions) > 0 {
+		v := p.MaxMicroversions
+		out.ApiVersions = &v
 	}
 	return out
 }

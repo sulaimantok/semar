@@ -204,6 +204,40 @@ export interface paths {
         delete: operations["deleteProvider"];
         options?: never;
         head?: never;
+        /**
+         * Update a provider
+         * @description Changes name, site, endpoints or region; ID and type are immutable,
+         *     so a renamed endpoint is an update, never a second registration
+         *     (roadmap §3.5). The fingerprint is re-derived; changing endpoints or
+         *     region clears the last connection check. Moving a provider to
+         *     another site moves its sync to that site's worker.
+         */
+        patch: operations["updateProvider"];
+        trace?: never;
+    };
+    "/api/v1/providers/{providerId}/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the connection to a provider
+         * @description Connects through the provider's driver and records the identity of
+         *     the cloud (cloudFingerprint) and its maximum API versions. Fails with
+         *     409 when another provider already holds that identity, 501 for
+         *     provider types without a driver yet, 502 when the provider refuses
+         *     the credentials or cannot be reached, and 504 on timeout.
+         */
+        post: operations["validateProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
         patch?: never;
         trace?: never;
     };
@@ -550,6 +584,17 @@ export interface components {
             regionName: string;
             /** @description Stable identity of the backing cloud, derived by the server. */
             fingerprint: string;
+            /** @description Identity reported by the driver on the last successful connection check. */
+            cloudFingerprint?: string;
+            /**
+             * Format: date-time
+             * @description Time of the last successful connection check; absent until checked.
+             */
+            validatedAt?: string;
+            /** @description Maximum API (micro)version per service, from the last connection check. */
+            apiVersions?: {
+                [key: string]: string;
+            };
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -563,6 +608,13 @@ export interface components {
             /** @description Keystone URL, or the API URLs of every node of one PVE cluster. */
             endpoints: string[];
             /** @description OpenStack region; empty for Proxmox. */
+            regionName?: string;
+        };
+        ProviderUpdate: {
+            name?: string;
+            /** @description Site ID; an empty string removes the provider from its site. */
+            siteId?: string;
+            endpoints?: string[];
             regionName?: string;
         };
         ProviderList: {
@@ -969,6 +1021,56 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    updateProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProviderUpdate"];
+            };
+        };
+        responses: {
+            /** @description The updated provider */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Provider"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    validateProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Connection check succeeded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Provider"];
+                };
             };
             default: components["responses"]["Problem"];
         };

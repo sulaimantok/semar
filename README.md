@@ -9,7 +9,7 @@
 | Phase | Scope | State |
 |---|---|---|
 | 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment and spikes S1–S3 |
-| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test; web sign-in, global Site/Project filter, Overview with capacity, Compute (VM list with filter chips, VM detail with history) and Settings (providers, sites, projects and mappings, write-only credentials). Next: provider update and connection check, operability (metrics, runbooks), OpenStack/Proxmox drivers, console proxy |
+| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test; web sign-in, global Site/Project filter, Overview with capacity, Compute (VM list with filter chips, VM detail with history) and Settings (providers, sites, projects and mappings, write-only credentials). provider update and connection check (cloud identity, API versions), trusted origins for reverse proxies. Next: operability (metrics, runbooks), OpenStack/Proxmox drivers, console proxy |
 | 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
 
 ## What's Here
@@ -86,7 +86,8 @@ The full contract is [`api/openapi.yaml`](api/openapi.yaml).
 | `POST /api/v1/auth/login`, `POST /api/v1/auth/logout` | public |
 | `GET /api/v1/auth/me` | signed in |
 | `GET /api/v1/sites`, `/projects`, `/projects/{id}/mappings`, `/providers`, `/providers/{id}` | signed in |
-| `POST` sites, projects, mappings, providers; `DELETE /providers/{id}` | admin |
+| `POST` sites, projects, mappings, providers; `PATCH`/`DELETE /providers/{id}` | admin |
+| `POST /api/v1/providers/{id}/validate` | admin; connection check through the provider's driver |
 | `GET/PUT/DELETE /api/v1/providers/{id}/credentials` | admin (secrets are write-only) |
 | `GET /api/v1/resources?kind=vm\|hypervisor\|image\|network\|volume` (optional `providerId`, `siteId`, `projectId`, `arch`) | signed in; scoped to the caller's role bindings (see below) |
 | `GET /api/v1/resources/{providerId}/{kind}/{externalId}` | signed in; same scoping, 404 outside it; includes orphaned resources and the latest 50 changes |
@@ -95,7 +96,7 @@ The full contract is [`api/openapi.yaml`](api/openapi.yaml).
 
 ### Authentication and audit
 
-Sign in with `POST /api/v1/auth/login`; the API sets an HttpOnly, SameSite=Strict session cookie. State-changing requests must carry an `X-Requested-By` header (CSRF protection). Every operation in the spec has an access policy (public, authenticated or admin); operations without one are refused.
+Sign in with `POST /api/v1/auth/login`; the API sets an HttpOnly, SameSite=Strict session cookie. State-changing requests must carry an `X-Requested-By` header, and a browser `Origin` must match the request's host — or, behind a reverse proxy that rewrites `Host`, one of `SEMAR_TRUSTED_ORIGINS` (CSRF protection). Every operation in the spec has an access policy (public, authenticated or admin); operations without one are refused.
 
 Logins, logouts and every Settings change are written to an append-only, hash-chained audit log. Verify it with:
 
@@ -125,6 +126,7 @@ In production run semar-api as a non-superuser database role: the append-only gu
 | `SEMAR_KEK_ID` | `k1` | ID of the current key-encryption key for provider credentials |
 | `SEMAR_KEK` | — (required) | Current KEK, 32 bytes base64 (`openssl rand -base64 32`); keep it outside the database host in production |
 | `SEMAR_KEK_PREVIOUS` | — | Old KEKs kept for decryption during rotation: `k0=<base64>,…` |
+| `SEMAR_TRUSTED_ORIGINS` | — | Comma-separated public origins of the UI (`https://semar.example.com`) when a reverse proxy rewrites `Host`; replaces the Host comparison of the CSRF check |
 | `SEMAR_HTTP_ADDR` | `:8080` | Listen address |
 | `SEMAR_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `SEMAR_SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown limit |
@@ -154,7 +156,13 @@ The worker serves one site (`SEMAR_SITE_ID`; providers without a site belong to 
 - a resource missing for `SEMAR_ORPHAN_AFTER` consecutive syncs is marked orphaned (never deleted) and restored if it reappears;
 - every create, change, orphaning and restore is appended to `resource_changes`.
 
-Until the OpenStack and Proxmox drivers land, only providers of type `fake` can be synced; other types can be registered, but their syncs fail with "driver not implemented".
+Until the OpenStack and Proxmox drivers land, only providers of type `fake` can be synced; other types can be registered, but their syncs and connection checks fail with "driver not implemented".
+
+### Changing a provider
+
+A provider is updated in place (`PATCH /api/v1/providers/{id}`, or **Edit** on its Settings page), never registered twice: ID and type are fixed, the endpoint fingerprint is re-derived, and a provider cannot be pointed at another provider's cloud. Changing endpoints or region clears the last connection check. Moving a provider to another site moves its sync schedule onto that site's worker within one `SEMAR_SCHEDULE_RECONCILE_INTERVAL`.
+
+`POST /api/v1/providers/{id}/validate` (**Check connection**) asks the driver for the cloud's identity and maximum API versions and records them. Two providers can never share a cloud identity, which also catches one cloud registered under two URLs. Driver errors are logged; clients only see a classification (refused credentials, unreachable, timeout).
 
 `GET /api/v1/resources` serves the cache, never the providers, and applies RBAC in the query: global admins and operators see every resource (including those not mapped to a project), global viewers see every resource that belongs to a project, and project- or provider-scoped bindings see only their scope. Hypervisors belong to no project and are visible to global bindings only. `GET /api/v1/capacity` aggregates through the same predicate, so totals never include resources the caller could not list; orphaned resources are not counted. An authorization matrix test exercises every operation against every kind of caller and fails when a new operation has no row.
 

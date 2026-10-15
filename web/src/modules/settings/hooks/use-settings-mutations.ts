@@ -10,12 +10,15 @@ import {
   createSite,
   deleteCredential,
   deleteProvider,
+  updateProvider,
+  validateProvider,
   putCredential,
   type ICredentialPurpose,
   type ICredentialPut,
   type IProjectMappingCreate,
   type IProjectCreate,
   type IProviderCreate,
+  type IProviderUpdate,
   type ISiteCreate,
 } from "../services/settings-service";
 
@@ -67,6 +70,26 @@ function useInvalidateProviders() {
 export function useCreateProvider() {
   const invalidate = useInvalidateProviders();
   return useMutation({ mutationFn: (body: IProviderCreate) => createProvider(body), onSuccess: invalidate });
+}
+
+export function useUpdateProvider(providerId: string) {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateProviders();
+  return useMutation({
+    mutationFn: (body: IProviderUpdate) => updateProvider(providerId, body),
+    onSuccess: async (p) => {
+      qc.setQueryData(settingsKeys.provider(providerId), p);
+      await invalidate();
+    },
+  });
+}
+
+export function useValidateProvider(providerId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => validateProvider(providerId),
+    onSuccess: (p) => qc.setQueryData(settingsKeys.provider(providerId), p),
+  });
 }
 
 export function useDeleteProvider() {

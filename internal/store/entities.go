@@ -78,14 +78,15 @@ func (s *Store) ListProjects(ctx context.Context) ([]model.Project, error) {
 }
 
 const providerColumns = `id, type, name, coalesce(site_id, ''), endpoints, region_name, fingerprint,
-	tls_fingerprint, capabilities, max_microversions, created_at, updated_at, deleted_at`
+	tls_fingerprint, capabilities, max_microversions, coalesce(cloud_fingerprint, ''), validated_at,
+	created_at, updated_at, deleted_at`
 
 func scanProvider(r pgx.Row) (model.Provider, error) {
 	var p model.Provider
 	var typ string
 	var caps, micro []byte
 	err := r.Scan(&p.ID, &typ, &p.Name, &p.SiteID, &p.Endpoints, &p.RegionName, &p.Fingerprint,
-		&p.TLSFingerprint, &caps, &micro, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt)
+		&p.TLSFingerprint, &caps, &micro, &p.CloudFingerprint, &p.ValidatedAt, &p.CreatedAt, &p.UpdatedAt, &p.DeletedAt)
 	if err != nil {
 		return model.Provider{}, err
 	}
@@ -122,6 +123,52 @@ func (s *Store) CreateProvider(ctx context.Context, p model.Provider) (model.Pro
 		p.TLSFingerprint, []byte(p.Capabilities), micro)
 	created, err := scanProvider(row)
 	return created, mapErr(err)
+}
+
+// UpdateProvider changes an active provider's name, site, endpoints and
+// region; ID and type are immutable. p.Fingerprint must be re-derived by
+// the caller. A change of endpoints or region clears the connection check,
+// since the new address has not been verified yet. Moving onto another
+// provider's fingerprint fails with ErrConflict.
+func (s *Store) UpdateProvider(ctx context.Context, p model.Provider) (model.Provider, error) {
+	row := s.pool.QueryRow(ctx, `
+		UPDATE providers SET
+		  name = $2, site_id = $3, endpoints = $4, region_name = $5, fingerprint = $6,
+		  cloud_fingerprint = CASE WHEN endpoints = $4 AND region_name = $5 THEN cloud_fingerprint END,
+		  validated_at      = CASE WHEN endpoints = $4 AND region_name = $5 THEN validated_at END,
+		  updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING `+providerColumns,
+		p.ID, p.Name, nullIfEmpty(p.SiteID), p.Endpoints, p.RegionName, p.Fingerprint)
+	updated, err := scanProvider(row)
+	return updated, mapErr(err)
+}
+
+// RecordProviderValidation stores the outcome of a successful connection
+// check. A cloud fingerprint already held by another active provider fails
+// with ErrConflict.
+func (s *Store) RecordProviderValidation(ctx context.Context, id, cloudFingerprint string, apiVersions map[string]string) (model.Provider, error) {
+	if apiVersions == nil {
+		apiVersions = map[string]string{}
+	}
+	micro, err := json.Marshal(apiVersions)
+	if err != nil {
+		return model.Provider{}, err
+	}
+	row := s.pool.QueryRow(ctx, `
+		UPDATE providers SET cloud_fingerprint = $2, max_microversions = $3, validated_at = now(), updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING `+providerColumns, id, nullIfEmpty(cloudFingerprint), micro)
+	p, err := scanProvider(row)
+	return p, mapErr(err)
+}
+
+// ProviderByCloudFingerprint returns the active provider holding a cloud
+// fingerprint.
+func (s *Store) ProviderByCloudFingerprint(ctx context.Context, cloudFingerprint string) (model.Provider, error) {
+	p, err := scanProvider(s.pool.QueryRow(ctx,
+		`SELECT `+providerColumns+` FROM providers WHERE cloud_fingerprint = $1 AND deleted_at IS NULL`, cloudFingerprint))
+	return p, mapErr(err)
 }
 
 // GetProvider returns an active provider.

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sulaimantok/semar/internal/api/gen"
+	"github.com/sulaimantok/semar/internal/driver/registry"
 	"github.com/sulaimantok/semar/internal/secret"
 	"github.com/sulaimantok/semar/internal/version"
 )
@@ -47,6 +48,15 @@ type Options struct {
 	LoginLimits LoginLimits
 	// Inventory backs the read-only inventory endpoints.
 	Inventory InventoryReader
+	// Drivers builds provider drivers for connection checks. Defaults to
+	// registry.New, the same resolution the worker uses.
+	Drivers DriverFactory
+	// ValidateTimeout bounds one connection check. Defaults to 15s.
+	ValidateTimeout time.Duration
+	// TrustedOrigins are the browser origins (scheme://host[:port]) allowed
+	// to send state-changing requests. Empty means the request's own Host,
+	// which is right unless a reverse proxy rewrites Host.
+	TrustedOrigins []string
 }
 
 // NewHandler returns the root HTTP handler with middleware applied.
@@ -62,6 +72,12 @@ func NewHandler(opts Options) http.Handler {
 	}
 	if opts.MaxBodyBytes <= 0 {
 		opts.MaxBodyBytes = 1 << 20
+	}
+	if opts.Drivers == nil {
+		opts.Drivers = registry.New
+	}
+	if opts.ValidateTimeout <= 0 {
+		opts.ValidateTimeout = 15 * time.Second
 	}
 	log := opts.Logger
 	srv := &server{opts: opts, logins: newLoginLimiter(opts.LoginLimits)}
@@ -91,7 +107,7 @@ func NewHandler(opts Options) http.Handler {
 	var h http.Handler = mux
 	h = withRecover(log, h)
 	h = withAuthentication(opts.Auth, log, h)
-	h = withCSRFProtection(h)
+	h = withCSRFProtection(opts.TrustedOrigins, h)
 	h = withBodyLimit(opts.MaxBodyBytes, h)
 	h = withAccessLog(log, h)
 	h = withClientIP(h)

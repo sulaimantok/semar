@@ -4,6 +4,7 @@ export const providerDetailStyles = {
   ...settingsUi,
   back: "text-sm text-muted hover:text-text focus-visible:outline-2 focus-visible:outline-accent",
   titleRow: "flex flex-wrap items-center justify-between gap-3",
+  titleActions: "flex flex-wrap items-center gap-2",
   title: "text-xl font-semibold tracking-tight",
   grid: "grid gap-4 lg:grid-cols-2",
   facts: "grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm",
