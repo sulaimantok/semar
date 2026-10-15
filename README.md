@@ -9,7 +9,7 @@
 | Phase | Scope | State |
 |---|---|---|
 | 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment and spikes S1–S3 |
-| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test; web sign-in, global Site/Project filter, Overview with capacity, Compute (VM list with filter chips, VM detail with history) and Settings (providers, sites, projects and mappings, write-only credentials). provider update and connection check (cloud identity, API versions), trusted origins for reverse proxies, read-only OpenStack and Proxmox drivers (tested against API fakes; lab verification pending). Next: operability (metrics, runbooks), lab contract tests, console proxy |
+| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test; web sign-in, global Site/Project filter, Overview with capacity, Compute (VM list with filter chips, VM detail with history) and Settings (providers, sites, projects and mappings, write-only credentials). provider update and connection check (cloud identity, API versions), trusted origins for reverse proxies, read-only OpenStack and Proxmox drivers (tested against API fakes; lab verification pending). Operability: Prometheus metrics on a separate listener, correlation IDs to the audit log and to OpenStack, runbooks. Next: lab contract tests, console proxy |
 | 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
 
 ## What's Here
@@ -31,6 +31,8 @@
 | Store | `internal/store`, `internal/model`, `internal/secret` | PostgreSQL (pgx) with embedded goose migrations: sites, projects, providers, project mappings, users, sessions, role bindings, append-only hash-chained audit log, inventory cache with change history and sync status; credentials sealed with envelope encryption (ADR-0004) |
 | Lite profile | `deploy/compose/` | PostgreSQL + Temporal + UI + SEMAR (development only) |
 | ADRs & spikes | `docs/adr/`, `docs/spikes/` | ADR-0001 … ADR-0007, spike S4 |
+| Runbooks | `docs/runbooks/` | Database roles, key rotation, break-glass, backup and restore |
+| Metrics | `internal/metrics` | Prometheus text exposition for API and worker (no client library) |
 
 ## Development
 
@@ -113,7 +115,9 @@ Provider credentials are write-only: `PUT /api/v1/providers/{id}/credentials` se
 semar-api kek-rewrap        # rewraps every credential with the current KEK; then drop the old key
 ```
 
-In production run semar-api as a non-superuser database role: the append-only guarantee relies on triggers that a superuser could disable.
+In production run semar-api and semar-worker as a database role that is neither a superuser nor the owner of the tables, and apply migrations separately with `semar-api migrate` as the owner: the append-only guarantee relies on triggers that a superuser or the table owner could disable. See [docs/runbooks/database-roles.md](docs/runbooks/database-roles.md).
+
+A lost local password is reset with `semar-api reset-password <username>` (new password on stdin; re-enables the account, ends its sessions, audited). See [docs/runbooks/break-glass.md](docs/runbooks/break-glass.md).
 
 ### Configuration
 
@@ -131,6 +135,7 @@ In production run semar-api as a non-superuser database role: the append-only gu
 | `SEMAR_KEK_PREVIOUS` | — | Old KEKs kept for decryption during rotation: `k0=<base64>,…` |
 | `SEMAR_TRUSTED_ORIGINS` | — | Comma-separated public origins of the UI (`https://semar.example.com`) when a reverse proxy rewrites `Host`; replaces the Host comparison of the CSRF check |
 | `SEMAR_HTTP_ADDR` | `:8080` | Listen address |
+| `SEMAR_METRICS_ADDR` | — | Listen address of a separate `/metrics` listener (e.g. `127.0.0.1:9090`); off when empty |
 | `SEMAR_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `SEMAR_SHUTDOWN_TIMEOUT` | `15s` | Graceful shutdown limit |
 
@@ -148,6 +153,7 @@ In production run semar-api as a non-superuser database role: the append-only gu
 | `SEMAR_DATABASE_URL` | — (required) | PostgreSQL URL; providers are read from and the inventory is written to it |
 | `SEMAR_ORPHAN_AFTER` | `3` | Consecutive syncs a resource may be missing before it is marked orphaned |
 | `SEMAR_SCHEDULE_RECONCILE_INTERVAL` | `1m` | How often sync schedules are reconciled with the registered providers |
+| `SEMAR_METRICS_ADDR` | — | Listen address of `/metrics` and `/healthz` (e.g. `127.0.0.1:9091`); off when empty |
 | `SEMAR_KEK_ID`, `SEMAR_KEK`, `SEMAR_KEK_PREVIOUS` | — | The same keys as semar-api; open discovery credentials inside sync activities (ADR-0005). Without them only `fake` providers sync |
 
 ### Inventory sync
@@ -181,6 +187,21 @@ A provider is updated in place (`PATCH /api/v1/providers/{id}`, or **Edit** on i
 `POST /api/v1/providers/{id}/validate` (**Check connection**) asks the driver for the cloud's identity and maximum API versions and records them. Two providers can never share a cloud identity, which also catches one cloud registered under two URLs. Driver errors are logged; clients only see a classification (refused credentials, unreachable, timeout).
 
 `GET /api/v1/resources` serves the cache, never the providers, and applies RBAC in the query: global admins and operators see every resource (including those not mapped to a project), global viewers see every resource that belongs to a project, and project- or provider-scoped bindings see only their scope. Hypervisors belong to no project and are visible to global bindings only. `GET /api/v1/capacity` aggregates through the same predicate, so totals never include resources the caller could not list; orphaned resources are not counted. An authorization matrix test exercises every operation against every kind of caller and fails when a new operation has no row.
+
+## Operations
+
+**Metrics.** With `SEMAR_METRICS_ADDR` set, each process serves Prometheus metrics on its own listener, so they can stay on an internal interface:
+
+| Metric | Process | Labels |
+|---|---|---|
+| `semar_http_requests_total`, `semar_http_request_duration_seconds` | semar-api | `method`, `route` (the route pattern, never raw paths), `status` |
+| `semar_inventory_syncs_total` | semar-worker | `provider`, `outcome` (`success`, `failure`, `skipped`, `stale`) |
+| `semar_inventory_sync_duration_seconds`, `semar_inventory_last_success_timestamp_seconds`, `semar_inventory_vms` | semar-worker | `provider` |
+| `semar_build_info`, `go_goroutines`, `go_memstats_heap_alloc_bytes`, `process_start_time_seconds` | both | |
+
+**Correlation.** Every API request has an `X-Request-ID` (accepted from the client when well formed, otherwise generated). It is returned in the response and in problem bodies, written to access logs and to every audit event, and sent to OpenStack as `X-OpenStack-Request-ID`. Syncs use the Temporal run ID the same way, so a sync can be followed from Temporal into the provider's logs.
+
+**Runbooks** live in [docs/runbooks/](docs/runbooks/).
 
 ## Adding a Provider Driver
 

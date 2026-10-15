@@ -1,24 +1,30 @@
 // Command semar-api serves the SEMAR HTTP API.
 //
-//	semar-api                serve the API
-//	semar-api audit-verify   verify the audit log hash chain and exit
-//	semar-api kek-rewrap     rewrap every credential with the current KEK and exit
+//	semar-api                       serve the API
+//	semar-api migrate               apply database migrations and exit
+//	semar-api reset-password <user> set a local password read from stdin (break-glass)
+//	semar-api audit-verify          verify the audit log hash chain and exit
+//	semar-api kek-rewrap            rewrap every credential with the current KEK and exit
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/sulaimantok/semar/internal/api"
 	"github.com/sulaimantok/semar/internal/auth"
 	"github.com/sulaimantok/semar/internal/config"
+	"github.com/sulaimantok/semar/internal/metrics"
 	"github.com/sulaimantok/semar/internal/secret"
 	"github.com/sulaimantok/semar/internal/store"
 	"github.com/sulaimantok/semar/internal/version"
@@ -37,8 +43,12 @@ func main() {
 		err = auditVerify()
 	case "kek-rewrap":
 		err = kekRewrap()
+	case "migrate":
+		err = migrate()
+	case "reset-password":
+		err = resetPassword(os.Args[2:], os.Stdin)
 	default:
-		err = fmt.Errorf("unknown command %q (want audit-verify or kek-rewrap)", cmd)
+		err = fmt.Errorf("unknown command %q (want migrate, reset-password, audit-verify or kek-rewrap)", cmd)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "semar-api:", err)
@@ -80,6 +90,20 @@ func run() error {
 		log.Warn("session cookie is not Secure; use only on localhost over plain HTTP")
 	}
 
+	var reg *metrics.Registry
+	if cfg.MetricsAddr != "" {
+		info := version.Get()
+		reg = metrics.NewRegistry(info.Version, info.Commit)
+		msrv, merrc := metrics.Serve(cfg.MetricsAddr, reg, nil)
+		defer func() { _ = msrv.Close() }()
+		go func() {
+			if err := <-merrc; err != nil {
+				log.Error("metrics listener stopped", "error", err)
+			}
+		}()
+		log.Info("serving metrics", "addr", cfg.MetricsAddr)
+	}
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: api.NewHandler(api.Options{
@@ -94,6 +118,7 @@ func run() error {
 			Secrets:        keyring,
 			Inventory:      st,
 			TrustedOrigins: cfg.TrustedOrigins,
+			Metrics:        reg,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
@@ -151,6 +176,72 @@ func bootstrapAdmin(ctx context.Context, st *store.Store, password string, log *
 }
 
 // auditVerify checks the audit hash chain; it exits non-zero if broken.
+// migrate applies pending migrations and exits. It needs only
+// SEMAR_DATABASE_URL, so it can run as the database owner role while the
+// API itself runs as a role that owns nothing (docs/runbooks/database-roles.md).
+func migrate() error {
+	dbURL := os.Getenv("SEMAR_DATABASE_URL")
+	if dbURL == "" {
+		return errors.New("SEMAR_DATABASE_URL is required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if err := store.Migrate(ctx, dbURL); err != nil {
+		return err
+	}
+	fmt.Println("migrations applied")
+	return nil
+}
+
+// resetPassword is the break-glass path for a lost local password: it reads
+// the new password from stdin (never from arguments or the environment,
+// which end up in shell history and process listings), re-enables the
+// account, ends its sessions and records the action in the audit log.
+func resetPassword(args []string, stdin io.Reader) error {
+	if len(args) != 1 || args[0] == "" {
+		return errors.New("usage: semar-api reset-password <username>  (new password on stdin)")
+	}
+	username := strings.ToLower(strings.TrimSpace(args[0]))
+	dbURL := os.Getenv("SEMAR_DATABASE_URL")
+	if dbURL == "" {
+		return errors.New("SEMAR_DATABASE_URL is required")
+	}
+	line, err := bufio.NewReader(io.LimitReader(stdin, 4096)).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("read password: %w", err)
+	}
+	password := strings.TrimRight(line, "\r\n")
+	hash, err := auth.HashPassword(password, auth.DefaultArgon2)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	st, err := store.Open(ctx, dbURL)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ended, err := st.ResetPassword(ctx, username, hash)
+	outcome := store.AuditSuccess
+	if err != nil {
+		outcome = store.AuditFailure
+	}
+	if _, aerr := st.AppendAudit(ctx, store.AuditEvent{
+		Actor: "break-glass-cli", Action: "user.reset_password", Target: username, Outcome: outcome,
+	}); aerr != nil {
+		return fmt.Errorf("audit log unavailable: %w", aerr)
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("no user %q", username)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Printf("password reset for %s; account enabled; %d session(s) ended\n", username, ended)
+	return nil
+}
+
 func auditVerify() error {
 	cfg, err := config.LoadAPI(os.Getenv)
 	if err != nil {

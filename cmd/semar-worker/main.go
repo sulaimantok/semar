@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/sulaimantok/semar/internal/config"
 	"github.com/sulaimantok/semar/internal/driver/registry"
+	"github.com/sulaimantok/semar/internal/metrics"
 	"github.com/sulaimantok/semar/internal/secret"
 	"github.com/sulaimantok/semar/internal/store"
 	"github.com/sulaimantok/semar/internal/version"
@@ -72,6 +74,22 @@ func run() error {
 		log.Warn("SEMAR_KEK not set: only fake providers can be synced")
 	}
 
+	var syncMetrics *workflow.SyncMetrics
+	if cfg.MetricsAddr != "" {
+		info := version.Get()
+		reg := metrics.NewRegistry(info.Version, info.Commit)
+		syncMetrics = workflow.NewSyncMetrics(reg)
+		healthz := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
+		msrv, merrc := metrics.Serve(cfg.MetricsAddr, reg, map[string]http.Handler{"GET /healthz": healthz})
+		defer func() { _ = msrv.Close() }()
+		go func() {
+			if err := <-merrc; err != nil {
+				log.Error("metrics listener stopped", "error", err)
+			}
+		}()
+		log.Info("serving metrics", "addr", cfg.MetricsAddr)
+	}
+
 	taskQueue := workflow.TaskQueueForSite(cfg.SiteID)
 	w := worker.New(c, taskQueue, worker.Options{})
 	w.RegisterWorkflow(workflow.SyncProviderWorkflow)
@@ -79,6 +97,7 @@ func run() error {
 		Drivers:     drivers,
 		Inventory:   st,
 		OrphanAfter: cfg.OrphanAfter,
+		Metrics:     syncMetrics,
 	})
 	if err := w.Start(); err != nil {
 		return fmt.Errorf("start worker: %w", err)

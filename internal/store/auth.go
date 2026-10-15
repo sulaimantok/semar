@@ -156,3 +156,26 @@ func (s *Store) SetUserDisabled(ctx context.Context, userID string, disabled boo
 	}
 	return nil
 }
+
+// ResetPassword sets a user's password hash, re-enables the account and
+// ends every session of the user, in one transaction (break-glass,
+// docs/runbooks/break-glass.md). It returns the number of sessions ended.
+func (s *Store) ResetPassword(ctx context.Context, username, passwordHash string) (int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var id string
+	err = tx.QueryRow(ctx, `
+		UPDATE users SET password_hash = $2, disabled = false, updated_at = now()
+		WHERE username = $1 RETURNING id`, username, passwordHash).Scan(&id)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return tag.RowsAffected(), mapErr(tx.Commit(ctx))
+}

@@ -36,6 +36,9 @@ type Worker struct {
 	// be synced.
 	KEKID string
 	KEKs  map[string][]byte
+	// MetricsAddr is the listen address of /metrics and /healthz; empty
+	// disables it.
+	MetricsAddr string
 }
 
 // LoadWorker reads SEMAR_* variables via getenv (os.Getenv in production).
@@ -73,6 +76,7 @@ func LoadWorker(getenv func(string) string) (Worker, error) {
 	setString(getenv, "SEMAR_TEMPORAL_NAMESPACE", &cfg.TemporalNamespace)
 	setString(getenv, "SEMAR_SITE_ID", &cfg.SiteID)
 	setString(getenv, "SEMAR_PAYLOAD_KEY_ID", &cfg.PayloadKeyID)
+	setString(getenv, "SEMAR_METRICS_ADDR", &cfg.MetricsAddr)
 
 	if v := getenv("SEMAR_LOG_LEVEL"); v != "" {
 		if err := cfg.LogLevel.UnmarshalText([]byte(strings.ToUpper(v))); err != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/sulaimantok/semar/internal/api/gen"
 	"github.com/sulaimantok/semar/internal/driver/registry"
+	"github.com/sulaimantok/semar/internal/metrics"
 	"github.com/sulaimantok/semar/internal/secret"
 	"github.com/sulaimantok/semar/internal/version"
 )
@@ -53,6 +54,8 @@ type Options struct {
 	Drivers DriverFactory
 	// ValidateTimeout bounds one connection check. Defaults to 15s.
 	ValidateTimeout time.Duration
+	// Metrics receives HTTP request metrics; nil disables them.
+	Metrics *metrics.Registry
 	// TrustedOrigins are the browser origins (scheme://host[:port]) allowed
 	// to send state-changing requests. Empty means the request's own Host,
 	// which is right unless a reverse proxy rewrites Host.
@@ -108,7 +111,7 @@ func NewHandler(opts Options) http.Handler {
 		writeProblem(w, r, http.StatusNotFound, "no route for "+r.Method+" "+r.URL.Path)
 	})
 
-	var h http.Handler = mux
+	h := withMetrics(opts.Metrics, mux)
 	h = withRecover(log, h)
 	h = withAuthentication(opts.Auth, log, h)
 	h = withCSRFProtection(opts.TrustedOrigins, h)
