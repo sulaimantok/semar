@@ -9,7 +9,7 @@
 | Phase | Scope | State |
 |---|---|---|
 | 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment and spikes S1–S3 |
-| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test, web sign-in and VM list. Next: Settings UI, OpenStack/Proxmox drivers, console proxy |
+| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test; web sign-in, Overview with capacity, Compute (VM list) and Settings (providers, sites, projects and mappings, write-only credentials). Next: global Site/Project filter and VM detail, provider update and connection check, OpenStack/Proxmox drivers, console proxy |
 | 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
 
 ## What's Here
@@ -22,9 +22,9 @@
 | Worker | `cmd/semar-worker`, `internal/workflow` | Temporal worker: per-provider sync Schedules reconciled with the registered providers, inventory persisted to PostgreSQL, AES-256-GCM payload codec with key rotation |
 | OpenAPI contract | `api/openapi.yaml` | Source of truth for the frontend ↔ backend contract |
 | Driver contract | `internal/driver/contract` | Provider-neutral model + read-only `CloudDriver` interface |
-| Contract test suite | `internal/driver/contracttest` | Run by every driver (Fake on each PR, lab nightly) |
+| Contract test suite | `internal/driver/contracttest` | Run by every driver (the Fake Driver on each PR; the OpenStack and Proxmox drivers will also run it against a lab) |
 | Fake Driver | `internal/driver/fake` | Deterministic inventory + fault injection (latency, error rate, fail-next) |
-| Web UI | `web/` | React + Vite + TypeScript + Tailwind; sign-in, overview and Compute (VM list); module-based layout, API types generated from the spec (see `web/README.md`) |
+| Web UI | `web/` | React + Vite + TypeScript + Tailwind; sign-in, Overview (API status, capacity), Compute (VM list), Settings (providers, sites, projects, mappings, credentials); module-based layout, API types generated from the spec (see `web/README.md`) |
 | Store | `internal/store`, `internal/model`, `internal/secret` | PostgreSQL (pgx) with embedded goose migrations: sites, projects, providers, project mappings, users, sessions, role bindings, append-only hash-chained audit log, inventory cache with change history and sync status; credentials sealed with envelope encryption (ADR-0004) |
 | Lite profile | `deploy/compose/` | PostgreSQL + Temporal + UI + SEMAR (development only) |
 | ADRs & spikes | `docs/adr/`, `docs/spikes/` | ADR-0001 … ADR-0007, spike S4 |
@@ -69,6 +69,12 @@ curl -b jar http://127.0.0.1:8080/api/v1/providers
 ```
 
 Ports are bound to `127.0.0.1`: API `8080`, Temporal `7233`, Temporal UI `8233`, PostgreSQL `5432`. See [spike S4](docs/spikes/s4-temporal-lite.md) for measurements.
+
+The Lite profile does not serve the web UI yet. Run it from `web/` with `npm ci && npm run dev` and open http://localhost:5173; the dev server proxies the API on `127.0.0.1:8080`.
+
+### Trying it out
+
+With the stack running, sign in to the web UI as `admin` and open **Settings → Providers** to register a provider of type **Fake** (any endpoint URL, e.g. `https://fake.example.com`). Within one sync interval the worker creates its schedule and the first sync fills **Compute** and the capacity cards on **Overview**. Add a project under **Settings → Projects** and map it to the fake scope `proj-a` to see ownership applied on the next sync.
 
 ### API overview
 
@@ -147,7 +153,7 @@ The worker serves one site (`SEMAR_SITE_ID`; providers without a site belong to 
 - a resource missing for `SEMAR_ORPHAN_AFTER` consecutive syncs is marked orphaned (never deleted) and restored if it reappears;
 - every create, change, orphaning and restore is appended to `resource_changes`.
 
-Until the OpenStack and Proxmox drivers land, only providers of type `fake` can be synced.
+Until the OpenStack and Proxmox drivers land, only providers of type `fake` can be synced; other types can be registered, but their syncs fail with "driver not implemented".
 
 `GET /api/v1/resources` serves the cache, never the providers, and applies RBAC in the query: global admins and operators see every resource (including those not mapped to a project), global viewers see every resource that belongs to a project, and project- or provider-scoped bindings see only their scope. Hypervisors belong to no project and are visible to global bindings only. `GET /api/v1/capacity` aggregates through the same predicate, so totals never include resources the caller could not list; orphaned resources are not counted. An authorization matrix test exercises every operation against every kind of caller and fails when a new operation has no row.
 

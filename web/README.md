@@ -2,6 +2,18 @@
 
 React + Vite + TypeScript + Tailwind single-page app for SEMAR.
 
+## Pages
+
+| Route | Module | What it shows |
+|---|---|---|
+| `/login` | `auth` | Sign-in (uniform error messages, rate-limit notice, same-app redirects only) |
+| `/` | `system` | API status, build, and the Capacity Overview from `compute` |
+| `/compute` | `compute` | VM list from the inventory cache with data age, provider filter and cursor paging |
+| `/settings/providers`, `/settings/providers/:id` | `settings` | Providers, their sync status, write-only credentials, removal |
+| `/settings/sites`, `/settings/projects` | `settings` | Sites; projects and their mappings to OpenStack projects / Proxmox pools |
+
+Every page is scoped by the API to the signed-in user's role bindings. Forms that change settings render for global admins only; the API enforces the same rule.
+
 ## Layout
 
 Follows a module-based architecture:
