@@ -153,6 +153,18 @@ func (e SyncStatusStatus) Valid() bool {
 	}
 }
 
+// Capacity defines model for Capacity.
+type Capacity struct {
+	Hypervisors *HypervisorCapacity `json:"hypervisors,omitempty"`
+	Vms         VMCapacity          `json:"vms"`
+}
+
+// CountByKey defines model for CountByKey.
+type CountByKey struct {
+	Count int64  `json:"count"`
+	Key   string `json:"key"`
+}
+
 // Credential defines model for Credential.
 type Credential struct {
 	CreatedAt time.Time          `json:"createdAt"`
@@ -194,6 +206,16 @@ type CredentialPut struct {
 
 // EntityId Examples: os-jkt
 type EntityId = string
+
+// HypervisorCapacity defines model for HypervisorCapacity.
+type HypervisorCapacity struct {
+	ByArch        []CountByKey `json:"byArch"`
+	MemoryMiB     int64        `json:"memoryMiB"`
+	MemoryMiBUsed int64        `json:"memoryMiBUsed"`
+	Total         int64        `json:"total"`
+	Vcpus         int64        `json:"vcpus"`
+	VcpusUsed     int64        `json:"vcpusUsed"`
+}
 
 // LoginRequest defines model for LoginRequest.
 type LoginRequest struct {
@@ -408,6 +430,19 @@ type SyncStatus struct {
 // SyncStatusStatus defines model for SyncStatus.Status.
 type SyncStatusStatus string
 
+// VMCapacity defines model for VMCapacity.
+type VMCapacity struct {
+	ByArch   []CountByKey `json:"byArch"`
+	ByStatus []CountByKey `json:"byStatus"`
+
+	// MemoryMiB Memory allocated to the counted VMs.
+	MemoryMiB int64 `json:"memoryMiB"`
+	Total     int64 `json:"total"`
+
+	// Vcpus vCPUs allocated to the counted VMs.
+	Vcpus int64 `json:"vcpus"`
+}
+
 // VersionInfo defines model for VersionInfo.
 type VersionInfo struct {
 	Commit    string `json:"commit"`
@@ -423,6 +458,12 @@ type ProjectId = EntityId
 
 // ProviderId Examples: os-jkt
 type ProviderId = EntityId
+
+// GetCapacityParams defines parameters for GetCapacity.
+type GetCapacityParams struct {
+	ProviderId *EntityId `form:"providerId,omitempty" json:"providerId,omitempty"`
+	ProjectId  *EntityId `form:"projectId,omitempty" json:"projectId,omitempty"`
+}
 
 // DeleteCredentialParams defines parameters for DeleteCredential.
 type DeleteCredentialParams struct {
@@ -471,6 +512,9 @@ type ServerInterface interface {
 	// GetMe The signed-in user and their role bindings
 	// (GET /api/v1/auth/me)
 	GetMe(w http.ResponseWriter, r *http.Request)
+	// GetCapacity Capacity Overview over the resources the caller may see
+	// (GET /api/v1/capacity)
+	GetCapacity(w http.ResponseWriter, r *http.Request, params GetCapacityParams)
 	// ListProjects List projects
 	// (GET /api/v1/projects)
 	ListProjects(w http.ResponseWriter, r *http.Request)
@@ -569,6 +613,52 @@ func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCapacity operation middleware
+func (siw *ServerInterfaceWrapper) GetCapacity(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCapacityParams
+
+	// ------------- Optional query parameter "providerId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "providerId", r.URL.Query(), &params.ProviderId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "providerId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "providerId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "projectId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "projectId", r.URL.Query(), &params.ProjectId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "projectId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCapacity(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1179,6 +1269,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.ListCredentials)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.PutCredential)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/resources", wrapper.ListResources)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/capacity", wrapper.GetCapacity)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers/{providerId}/sync-status", wrapper.GetProviderSyncStatus)
 
 	return m
@@ -1302,6 +1393,45 @@ type GetMedefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetMedefaultApplicationProblemPlusJSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCapacityRequestObject struct {
+	Params GetCapacityParams
+}
+
+type GetCapacityResponseObject interface {
+	VisitGetCapacityResponse(w http.ResponseWriter) error
+}
+
+type GetCapacity200JSONResponse Capacity
+
+func (response GetCapacity200JSONResponse) VisitGetCapacityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCapacitydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetCapacitydefaultApplicationProblemPlusJSONResponse) VisitGetCapacityResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -1993,6 +2123,9 @@ type StrictServerInterface interface {
 	// GetMe The signed-in user and their role bindings
 	// (GET /api/v1/auth/me)
 	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
+	// GetCapacity Capacity Overview over the resources the caller may see
+	// (GET /api/v1/capacity)
+	GetCapacity(ctx context.Context, request GetCapacityRequestObject) (GetCapacityResponseObject, error)
 	// ListProjects List projects
 	// (GET /api/v1/projects)
 	ListProjects(ctx context.Context, request ListProjectsRequestObject) (ListProjectsResponseObject, error)
@@ -2160,6 +2293,32 @@ func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetMeResponseObject); ok {
 		if err := validResponse.VisitGetMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCapacity operation middleware
+func (sh *strictHandler) GetCapacity(w http.ResponseWriter, r *http.Request, params GetCapacityParams) {
+	var request GetCapacityRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCapacity(ctx, request.(GetCapacityRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCapacity")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCapacityResponseObject); ok {
+		if err := validResponse.VisitGetCapacityResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

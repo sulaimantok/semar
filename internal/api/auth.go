@@ -70,6 +70,7 @@ var operationAccess = map[string]access{
 	// Scoped per caller inside the handler (visibilityFor).
 	"ListResources":         accessAuthenticated,
 	"GetProviderSyncStatus": accessAuthenticated,
+	"GetCapacity":           accessAuthenticated,
 }
 
 // authorize is a strict-server middleware enforcing operationAccess.
