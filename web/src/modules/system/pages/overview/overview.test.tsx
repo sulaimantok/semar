@@ -16,6 +16,9 @@ function stubApi(readyz: Response) {
       if (path === "/api/v1/version") {
         return json(200, { version: "v0.1.0", commit: "abc1234", goVersion: "go1.26.9", platform: "linux/arm64" });
       }
+      if (path === "/api/v1/capacity") {
+        return json(200, { vms: { total: 0, vcpus: 0, memoryMiB: 0, byStatus: [], byArch: [] } });
+      }
       return json(404, { type: "about:blank", title: "Not Found", status: 404 }, "application/problem+json");
     }),
   );
@@ -42,6 +45,7 @@ describe("OverviewPage", () => {
     expect(await screen.findByText("Ready")).toBeTruthy();
     expect(await screen.findByText("v0.1.0")).toBeTruthy();
     expect(screen.getByText("linux/arm64")).toBeTruthy();
+    expect(await screen.findByText(/No inventory yet/)).toBeTruthy();
   });
 
   it("shows failing readiness checks", async () => {

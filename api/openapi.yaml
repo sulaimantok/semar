@@ -383,6 +383,35 @@ paths:
                 $ref: "#/components/schemas/ResourceList"
         default:
           $ref: "#/components/responses/Problem"
+  /api/v1/capacity:
+    get:
+      tags: [inventory]
+      summary: Capacity Overview over the resources the caller may see
+      description: |
+        Aggregates SEMAR's inventory cache. VM totals cover exactly the VMs
+        the caller could list with GET /api/v1/resources, so scoped callers
+        never see aggregates outside their projects. Physical (hypervisor)
+        capacity is included only for global bindings and only when no
+        project filter is set. Orphaned resources are not counted.
+      operationId: getCapacity
+      parameters:
+        - name: providerId
+          in: query
+          schema:
+            $ref: "#/components/schemas/EntityId"
+        - name: projectId
+          in: query
+          schema:
+            $ref: "#/components/schemas/EntityId"
+      responses:
+        "200":
+          description: Capacity summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capacity"
+        default:
+          $ref: "#/components/responses/Problem"
   /api/v1/providers/{providerId}/sync-status:
     parameters:
       - $ref: "#/components/parameters/ProviderId"
@@ -470,6 +499,69 @@ components:
             $ref: "#/components/schemas/Resource"
         nextCursor:
           type: string
+    CountByKey:
+      type: object
+      required: [key, count]
+      properties:
+        key:
+          type: string
+        count:
+          type: integer
+          format: int64
+    VMCapacity:
+      type: object
+      required: [total, vcpus, memoryMiB, byStatus, byArch]
+      properties:
+        total:
+          type: integer
+          format: int64
+        vcpus:
+          type: integer
+          format: int64
+          description: vCPUs allocated to the counted VMs.
+        memoryMiB:
+          type: integer
+          format: int64
+          description: Memory allocated to the counted VMs.
+        byStatus:
+          type: array
+          items:
+            $ref: "#/components/schemas/CountByKey"
+        byArch:
+          type: array
+          items:
+            $ref: "#/components/schemas/CountByKey"
+    HypervisorCapacity:
+      type: object
+      required: [total, vcpus, vcpusUsed, memoryMiB, memoryMiBUsed, byArch]
+      properties:
+        total:
+          type: integer
+          format: int64
+        vcpus:
+          type: integer
+          format: int64
+        vcpusUsed:
+          type: integer
+          format: int64
+        memoryMiB:
+          type: integer
+          format: int64
+        memoryMiBUsed:
+          type: integer
+          format: int64
+        byArch:
+          type: array
+          items:
+            $ref: "#/components/schemas/CountByKey"
+    Capacity:
+      type: object
+      required: [vms]
+      properties:
+        vms:
+          $ref: "#/components/schemas/VMCapacity"
+        hypervisors:
+          $ref: "#/components/schemas/HypervisorCapacity"
     SyncStatus:
       type: object
       required: [providerId, status, lastAttemptAt, consecutiveFailures, lastError]

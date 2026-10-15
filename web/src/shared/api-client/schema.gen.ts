@@ -260,6 +260,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/capacity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Capacity Overview over the resources the caller may see
+         * @description Aggregates SEMAR's inventory cache. VM totals cover exactly the VMs
+         *     the caller could list with GET /api/v1/resources, so scoped callers
+         *     never see aggregates outside their projects. Physical (hypervisor)
+         *     capacity is included only for global bindings and only when no
+         *     project filter is set. Orphaned resources are not counted.
+         */
+        get: operations["getCapacity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers/{providerId}/sync-status": {
         parameters: {
             query?: never;
@@ -313,6 +337,44 @@ export interface components {
         ResourceList: {
             items: components["schemas"]["Resource"][];
             nextCursor?: string;
+        };
+        CountByKey: {
+            key: string;
+            /** Format: int64 */
+            count: number;
+        };
+        VMCapacity: {
+            /** Format: int64 */
+            total: number;
+            /**
+             * Format: int64
+             * @description vCPUs allocated to the counted VMs.
+             */
+            vcpus: number;
+            /**
+             * Format: int64
+             * @description Memory allocated to the counted VMs.
+             */
+            memoryMiB: number;
+            byStatus: components["schemas"]["CountByKey"][];
+            byArch: components["schemas"]["CountByKey"][];
+        };
+        HypervisorCapacity: {
+            /** Format: int64 */
+            total: number;
+            /** Format: int64 */
+            vcpus: number;
+            /** Format: int64 */
+            vcpusUsed: number;
+            /** Format: int64 */
+            memoryMiB: number;
+            /** Format: int64 */
+            memoryMiBUsed: number;
+            byArch: components["schemas"]["CountByKey"][];
+        };
+        Capacity: {
+            vms: components["schemas"]["VMCapacity"];
+            hypervisors?: components["schemas"]["HypervisorCapacity"];
         };
         SyncStatus: {
             providerId: components["schemas"]["EntityId"];
@@ -971,6 +1033,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResourceList"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getCapacity: {
+        parameters: {
+            query?: {
+                providerId?: components["schemas"]["EntityId"];
+                projectId?: components["schemas"]["EntityId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Capacity summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Capacity"];
                 };
             };
             default: components["responses"]["Problem"];

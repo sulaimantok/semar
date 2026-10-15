@@ -17,6 +17,7 @@ import (
 type InventoryReader interface {
 	ListResources(ctx context.Context, f store.ResourceFilter) ([]store.Resource, error)
 	GetSyncStatus(ctx context.Context, providerID string) (store.SyncStatus, error)
+	CapacitySummary(ctx context.Context, f store.CapacityFilter) (store.Capacity, error)
 }
 
 var _ InventoryReader = (*store.Store)(nil)
@@ -137,6 +138,63 @@ func (s *server) listResources(ctx context.Context, params gen.ListResourcesPara
 	return out, nil
 }
 
+func (s *server) GetCapacity(ctx context.Context, req gen.GetCapacityRequestObject) (gen.GetCapacityResponseObject, error) {
+	const instance = "/api/v1/capacity"
+	c, err := s.capacity(ctx, req.Params)
+	if err != nil {
+		code, p := s.problemFor(ctx, instance, err)
+		return gen.GetCapacitydefaultApplicationProblemPlusJSONResponse{StatusCode: code, Body: p}, nil
+	}
+	return gen.GetCapacity200JSONResponse(c), nil
+}
+
+func (s *server) capacity(ctx context.Context, params gen.GetCapacityParams) (gen.Capacity, error) {
+	if s.opts.Inventory == nil {
+		return gen.Capacity{}, &apiError{status: http.StatusServiceUnavailable, detail: "inventory not configured"}
+	}
+	p := auth.PrincipalFrom(ctx)
+	f := store.CapacityFilter{
+		VMs:         visibilityFor(p, store.KindVM),
+		Hypervisors: visibilityFor(p, store.KindHypervisor).All,
+	}
+	if params.ProviderId != nil {
+		f.ProviderID = *params.ProviderId
+	}
+	if params.ProjectId != nil {
+		f.ProjectIDs = []string{*params.ProjectId}
+	}
+	c, err := s.opts.Inventory.CapacitySummary(ctx, f)
+	if err != nil {
+		return gen.Capacity{}, err
+	}
+	out := gen.Capacity{Vms: gen.VMCapacity{
+		Total:     c.VMs.Total,
+		Vcpus:     c.VMs.VCPUs,
+		MemoryMiB: c.VMs.MemoryMiB,
+		ByStatus:  toCounts(c.VMs.ByStatus),
+		ByArch:    toCounts(c.VMs.ByArch),
+	}}
+	if h := c.Hypervisors; h != nil {
+		out.Hypervisors = &gen.HypervisorCapacity{
+			Total:         h.Total,
+			Vcpus:         h.VCPUs,
+			VcpusUsed:     h.VCPUsUsed,
+			MemoryMiB:     h.MemoryMiB,
+			MemoryMiBUsed: h.MemoryMiBUsed,
+			ByArch:        toCounts(h.ByArch),
+		}
+	}
+	return out, nil
+}
+
+func toCounts(bs []store.CountByKey) []gen.CountByKey {
+	out := make([]gen.CountByKey, len(bs))
+	for i, b := range bs {
+		out[i] = gen.CountByKey{Key: b.Key, Count: b.Count}
+	}
+	return out
+}
+
 func (s *server) GetProviderSyncStatus(ctx context.Context, req gen.GetProviderSyncStatusRequestObject) (gen.GetProviderSyncStatusResponseObject, error) {
 	instance := "/api/v1/providers/" + req.ProviderId + "/sync-status"
 	st, err := s.getSyncStatus(ctx, req.ProviderId)
@@ -154,6 +212,15 @@ func (s *server) getSyncStatus(ctx context.Context, providerID string) (gen.Sync
 	if _, err := s.opts.Settings.GetProvider(ctx, providerID); err != nil {
 		return gen.SyncStatus{}, err
 	}
+	p := auth.PrincipalFrom(ctx)
+	visible, err := s.providerVisible(ctx, p, providerID)
+	if err != nil {
+		return gen.SyncStatus{}, err
+	}
+	if !visible {
+		// Indistinguishable from an unknown provider.
+		return gen.SyncStatus{}, store.ErrNotFound
+	}
 	st, err := s.opts.Inventory.GetSyncStatus(ctx, providerID)
 	if errors.Is(err, store.ErrNotFound) {
 		return gen.SyncStatus{}, &apiError{status: http.StatusNotFound, detail: "provider has not been synced yet"}
@@ -168,8 +235,43 @@ func (s *server) getSyncStatus(ctx context.Context, providerID string) (gen.Sync
 		LastSuccessAt:       st.LastSuccessAt,
 		LastObservedAt:      st.LastObservedAt,
 		ConsecutiveFailures: st.ConsecutiveFailures,
-		LastError:           st.LastError,
+		LastError:           lastErrorFor(p, st.LastError),
 	}, nil
+}
+
+// providerVisible reports whether p may see a provider's sync status:
+// global bindings see every provider, scoped bindings see their provider or
+// the providers their project is mapped to.
+func (s *server) providerVisible(ctx context.Context, p *auth.Principal, providerID string) (bool, error) {
+	if p == nil {
+		return false, nil
+	}
+	for _, b := range p.Bindings {
+		switch {
+		case b.Global(), b.ProviderID == providerID:
+			return true, nil
+		case b.ProviderID == "":
+			ms, err := s.opts.Settings.ListProjectMappings(ctx, b.ProjectID)
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return false, err
+			}
+			for _, m := range ms {
+				if m.ProviderID == providerID {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
+// lastErrorFor hides driver error text, which can name endpoints and
+// internal hosts, from everyone but global admins and operators.
+func lastErrorFor(p *auth.Principal, msg string) string {
+	if visibilityFor(p, store.KindVM).All {
+		return msg
+	}
+	return ""
 }
 
 func toResource(r store.Resource) gen.Resource {

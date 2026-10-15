@@ -384,6 +384,37 @@ type Visibility struct {
 	Grants      []Grant
 }
 
+// queryArgs collects positional arguments while a query is assembled.
+type queryArgs struct{ args []any }
+
+// add appends v and returns its placeholder.
+func (q *queryArgs) add(v any) string {
+	q.args = append(q.args, v)
+	return q.last()
+}
+
+// last returns the placeholder of the most recently added argument.
+func (q *queryArgs) last() string { return fmt.Sprintf("$%d", len(q.args)) }
+
+// clause returns the SQL predicate (over alias r) admitting the resources v
+// may see. Every inventory query, lists and aggregates alike, goes through it
+// so that RBAC is applied identically everywhere (roadmap §3.4).
+func (v Visibility) clause(q *queryArgs) string {
+	projects := make([]string, len(v.Grants))
+	providers := make([]string, len(v.Grants))
+	for i, g := range v.Grants {
+		projects[i], providers[i] = g.ProjectID, g.ProviderID
+	}
+	return `(
+		        ` + q.add(v.All) + `
+		     OR (` + q.add(v.AllAssigned) + ` AND r.project_id IS NOT NULL)
+		     OR EXISTS (
+		          SELECT 1 FROM unnest(` + q.add(projects) + `::text[], ` + q.add(providers) + `::text[]) AS g(project_id, provider_id)
+		          WHERE r.project_id IS NOT NULL
+		            AND (g.project_id = '' OR g.project_id = r.project_id)
+		            AND (g.provider_id = '' OR g.provider_id = r.provider_id)))`
+}
+
 // ResourceFilter selects resources for ListResources.
 type ResourceFilter struct {
 	Kind       ResourceKind
@@ -409,32 +440,20 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 	if f.Limit <= 0 || f.Limit > 1000 {
 		f.Limit = 1000
 	}
-	grantProjects := make([]string, len(f.Visibility.Grants))
-	grantProviders := make([]string, len(f.Visibility.Grants))
-	for i, g := range f.Visibility.Grants {
-		grantProjects[i], grantProviders[i] = g.ProjectID, g.ProviderID
-	}
-	rows, err := s.pool.Query(ctx, `
+	q := &queryArgs{}
+	sql := `
 		SELECT provider_id, kind, external_id, name, external_scope, coalesce(project_id, ''), arch, status,
 		       spec, observed_at, first_seen_at, orphaned_at
 		FROM resources r
-		WHERE kind = $1
-		  AND ($2 = '' OR provider_id = $2)
-		  AND ($3::text[] IS NULL OR project_id = ANY($3))
-		  AND ($4 OR orphaned_at IS NULL)
-		  AND (provider_id, external_id) > ($5, $6)
-		  AND (
-		        $8
-		     OR ($9 AND r.project_id IS NOT NULL)
-		     OR EXISTS (
-		          SELECT 1 FROM unnest($10::text[], $11::text[]) AS g(project_id, provider_id)
-		          WHERE r.project_id IS NOT NULL
-		            AND (g.project_id = '' OR g.project_id = r.project_id)
-		            AND (g.provider_id = '' OR g.provider_id = r.provider_id)))
+		WHERE kind = ` + q.add(string(f.Kind)) + `
+		  AND (` + q.add(f.ProviderID) + ` = '' OR provider_id = ` + q.last() + `)
+		  AND (` + q.add(f.ProjectIDs) + `::text[] IS NULL OR project_id = ANY(` + q.last() + `))
+		  AND (` + q.add(f.IncludeOrphaned) + ` OR orphaned_at IS NULL)
+		  AND (provider_id, external_id) > (` + q.add(f.AfterProvider) + `, ` + q.add(f.AfterExternalID) + `)
+		  AND ` + f.Visibility.clause(q) + `
 		ORDER BY provider_id, external_id
-		LIMIT $7`,
-		string(f.Kind), f.ProviderID, f.ProjectIDs, f.IncludeOrphaned, f.AfterProvider, f.AfterExternalID, f.Limit,
-		f.Visibility.All, f.Visibility.AllAssigned, grantProjects, grantProviders)
+		LIMIT ` + q.add(f.Limit)
+	rows, err := s.pool.Query(ctx, sql, q.args...)
 	if err != nil {
 		return nil, mapErr(err)
 	}

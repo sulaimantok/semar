@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -176,4 +177,38 @@ func TestProviderSyncStatus(t *testing.T) {
 	a.expect(a.call("POST", "/api/v1/providers", `{"id":"fresh","type":"fake","name":"Fresh","endpoints":["https://fresh.lab"]}`), http.StatusCreated, nil)
 	a.expect(a.call("GET", "/api/v1/providers/fresh/sync-status", ""), http.StatusNotFound, nil)
 	a.expect(a.call("GET", "/api/v1/providers/ghost/sync-status", ""), http.StatusNotFound, nil)
+}
+
+func TestCapacityTotals(t *testing.T) {
+	a := newInventoryAPI(t)
+	var c gen.Capacity
+	a.expect(a.call("GET", "/api/v1/capacity", ""), http.StatusOK, &c)
+	want := gen.VMCapacity{Total: 4, Vcpus: 8, MemoryMiB: 0,
+		ByStatus: []gen.CountByKey{{Key: "running", Count: 4}},
+		ByArch:   []gen.CountByKey{{Key: "arm64", Count: 4}}}
+	if !reflect.DeepEqual(c.Vms, want) {
+		t.Fatalf("vms = %+v, want %+v", c.Vms, want)
+	}
+	if c.Hypervisors == nil || c.Hypervisors.Total != 1 || c.Hypervisors.ByArch[0] != (gen.CountByKey{Key: "arm64", Count: 1}) {
+		t.Fatalf("hypervisors = %+v", c.Hypervisors)
+	}
+
+	a.expect(a.call("GET", "/api/v1/capacity?providerId=os-jkt", ""), http.StatusOK, &c)
+	if c.Vms.Total != 1 || c.Hypervisors == nil || c.Hypervisors.Total != 0 {
+		t.Fatalf("os-jkt capacity = %+v", c)
+	}
+	c = gen.Capacity{}
+	a.expect(a.call("GET", "/api/v1/capacity?projectId=payment", ""), http.StatusOK, &c)
+	if c.Vms.Total != 2 || c.Hypervisors != nil {
+		t.Fatalf("payment capacity = %+v", c)
+	}
+
+	// Orphaned VMs are not counted.
+	if _, err := a.st.ApplySnapshot(t.Context(), store.Snapshot{ProviderID: "os-jkt", ObservedAt: syncedAt.Add(time.Minute)}, 1); err != nil {
+		t.Fatal(err)
+	}
+	a.expect(a.call("GET", "/api/v1/capacity?providerId=os-jkt", ""), http.StatusOK, &c)
+	if c.Vms.Total != 0 || len(c.Vms.ByArch) != 0 {
+		t.Fatalf("capacity after orphaning = %+v", c.Vms)
+	}
 }

@@ -9,7 +9,7 @@
 | Phase | Scope | State |
 |---|---|---|
 | 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment and spikes S1–S3 |
-| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, web sign-in and VM list. Next: OpenStack/Proxmox drivers, capacity overview, Settings UI, console proxy |
+| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test, web sign-in and VM list. Next: Settings UI, OpenStack/Proxmox drivers, console proxy |
 | 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
 
 ## What's Here
@@ -83,7 +83,8 @@ The full contract is [`api/openapi.yaml`](api/openapi.yaml).
 | `POST` sites, projects, mappings, providers; `DELETE /providers/{id}` | admin |
 | `GET/PUT/DELETE /api/v1/providers/{id}/credentials` | admin (secrets are write-only) |
 | `GET /api/v1/resources?kind=vm\|hypervisor\|image\|network\|volume` | signed in; scoped to the caller's role bindings (see below) |
-| `GET /api/v1/providers/{id}/sync-status` | signed in |
+| `GET /api/v1/capacity` | signed in; same scoping as `/resources`; physical capacity for global bindings only |
+| `GET /api/v1/providers/{id}/sync-status` | signed in; providers in the caller's scope; `lastError` for global admins and operators only |
 
 ### Authentication and audit
 
@@ -148,7 +149,7 @@ The worker serves one site (`SEMAR_SITE_ID`; providers without a site belong to 
 
 Until the OpenStack and Proxmox drivers land, only providers of type `fake` can be synced.
 
-`GET /api/v1/resources` serves the cache, never the providers, and applies RBAC in the query: global admins and operators see every resource (including those not mapped to a project), global viewers see every resource that belongs to a project, and project- or provider-scoped bindings see only their scope. Hypervisors belong to no project and are visible to global bindings only.
+`GET /api/v1/resources` serves the cache, never the providers, and applies RBAC in the query: global admins and operators see every resource (including those not mapped to a project), global viewers see every resource that belongs to a project, and project- or provider-scoped bindings see only their scope. Hypervisors belong to no project and are visible to global bindings only. `GET /api/v1/capacity` aggregates through the same predicate, so totals never include resources the caller could not list; orphaned resources are not counted. An authorization matrix test exercises every operation against every kind of caller and fails when a new operation has no row.
 
 ## Adding a Provider Driver
 

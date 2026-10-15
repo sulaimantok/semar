@@ -1,3 +1,4 @@
+import { CapacityOverview } from "@/modules/compute";
 import { cn } from "@/shared/utils/cn";
 
 import { useReadiness } from "../../hooks/use-readiness";
@@ -10,7 +11,7 @@ export function OverviewPage() {
     <div className={styles.page}>
       <header className={styles.header}>
         <h1 className={styles.title}>Overview</h1>
-        <p className={styles.subtitle}>Health of the SEMAR control plane.</p>
+        <p className={styles.subtitle}>Health of the SEMAR control plane and the capacity you can see.</p>
       </header>
 
       <div className={styles.grid}>
@@ -18,9 +19,7 @@ export function OverviewPage() {
         <BuildCard />
       </div>
 
-      <p className={styles.empty}>
-        Inventory from OpenStack and Proxmox appears here once providers are registered.
-      </p>
+      <CapacityOverview />
     </div>
   );
 }

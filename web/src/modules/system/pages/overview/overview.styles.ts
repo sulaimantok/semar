@@ -16,6 +16,4 @@ export const overviewStyles = {
   facts: "grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm",
   factLabel: "text-muted",
   factValue: "truncate font-mono",
-  empty:
-    "rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted",
 } as const;
