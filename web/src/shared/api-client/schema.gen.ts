@@ -584,6 +584,8 @@ export interface components {
             regionName: string;
             /** @description Stable identity of the backing cloud, derived by the server. */
             fingerprint: string;
+            /** @description Pinned SHA-256 certificate fingerprint (lowercase hex); empty when the system roots are used. */
+            tlsFingerprint: string;
             /** @description Identity reported by the driver on the last successful connection check. */
             cloudFingerprint?: string;
             /**
@@ -609,6 +611,13 @@ export interface components {
             endpoints: string[];
             /** @description OpenStack region; empty for Proxmox. */
             regionName?: string;
+            /**
+             * @description SHA-256 fingerprint of the server certificate to pin instead of
+             *     verifying it against the system roots, for self-signed endpoints
+             *     (Proxmox: `pvenode cert info`). Colons are optional; an empty
+             *     string removes the pin.
+             */
+            tlsFingerprint?: string;
         };
         ProviderUpdate: {
             name?: string;
@@ -616,6 +625,13 @@ export interface components {
             siteId?: string;
             endpoints?: string[];
             regionName?: string;
+            /**
+             * @description SHA-256 fingerprint of the server certificate to pin instead of
+             *     verifying it against the system roots, for self-signed endpoints
+             *     (Proxmox: `pvenode cert info`). Colons are optional; an empty
+             *     string removes the pin.
+             */
+            tlsFingerprint?: string;
         };
         ProviderList: {
             items: components["schemas"]["Provider"][];

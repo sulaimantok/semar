@@ -24,6 +24,9 @@ type ProviderLookup interface {
 // from the next sync.
 type RegisteredDrivers struct {
 	Providers ProviderLookup
+	// Resolver opens discovery credentials for real providers; without it
+	// only fake providers have a driver.
+	Resolver *registry.Resolver
 }
 
 // Driver implements DriverResolver.
@@ -35,5 +38,8 @@ func (r RegisteredDrivers) Driver(ctx context.Context, providerID string) (contr
 	if err != nil {
 		return nil, err
 	}
-	return registry.New(p)
+	if r.Resolver == nil {
+		return registry.New(p)
+	}
+	return r.Resolver.Driver(ctx, p)
 }

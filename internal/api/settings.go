@@ -10,6 +10,7 @@ import (
 
 	"github.com/sulaimantok/semar/internal/api/gen"
 	"github.com/sulaimantok/semar/internal/driver/contract"
+	"github.com/sulaimantok/semar/internal/driver/httpx"
 	"github.com/sulaimantok/semar/internal/model"
 	"github.com/sulaimantok/semar/internal/store"
 )
@@ -305,6 +306,11 @@ func (s *server) createProvider(ctx context.Context, body *gen.ProviderCreate) (
 	if body.RegionName != nil {
 		p.RegionName = strings.TrimSpace(*body.RegionName)
 	}
+	if body.TlsFingerprint != nil {
+		if p.TLSFingerprint, err = normalizeTLSFingerprint(*body.TlsFingerprint); err != nil {
+			return model.Provider{}, err
+		}
+	}
 	p.Fingerprint, err = model.ProviderFingerprint(p.Type, p.Endpoints, p.RegionName)
 	if err != nil {
 		return model.Provider{}, badRequest("%s", err.Error())
@@ -335,7 +341,7 @@ func (s *server) updateProvider(ctx context.Context, id string, body *gen.Provid
 	if err != nil {
 		return model.Provider{}, err
 	}
-	if body == nil || (body.Name == nil && body.SiteId == nil && body.Endpoints == nil && body.RegionName == nil) {
+	if body == nil || (body.Name == nil && body.SiteId == nil && body.Endpoints == nil && body.RegionName == nil && body.TlsFingerprint == nil) {
 		return model.Provider{}, badRequest("nothing to update")
 	}
 	p, err := st.GetProvider(ctx, id)
@@ -361,6 +367,11 @@ func (s *server) updateProvider(ctx context.Context, id string, body *gen.Provid
 	}
 	if body.RegionName != nil {
 		p.RegionName = strings.TrimSpace(*body.RegionName)
+	}
+	if body.TlsFingerprint != nil {
+		if p.TLSFingerprint, err = normalizeTLSFingerprint(*body.TlsFingerprint); err != nil {
+			return model.Provider{}, err
+		}
 	}
 	if p.Fingerprint, err = model.ProviderFingerprint(p.Type, p.Endpoints, p.RegionName); err != nil {
 		return model.Provider{}, badRequest("%s", err.Error())
@@ -405,6 +416,18 @@ func (s *server) DeleteProvider(ctx context.Context, req gen.DeleteProviderReque
 	return gen.DeleteProvider204Response{}, nil
 }
 
+// normalizeTLSFingerprint accepts "AB:CD:…" or plain hex; "" removes the pin.
+func normalizeTLSFingerprint(fp string) (string, error) {
+	if strings.TrimSpace(fp) == "" {
+		return "", nil
+	}
+	n, err := httpx.NormalizeFingerprint(fp)
+	if err != nil {
+		return "", badRequest("%s", err.Error())
+	}
+	return n, nil
+}
+
 // --- Conversions ---
 
 func toSite(s model.Site) gen.Site {
@@ -425,14 +448,15 @@ func toProjectMapping(m model.ProjectMapping) gen.ProjectMapping {
 
 func toProvider(p model.Provider) gen.Provider {
 	out := gen.Provider{
-		Id:          p.ID,
-		Type:        gen.ProviderType(p.Type),
-		Name:        p.Name,
-		Endpoints:   p.Endpoints,
-		RegionName:  p.RegionName,
-		Fingerprint: p.Fingerprint,
-		CreatedAt:   p.CreatedAt,
-		UpdatedAt:   p.UpdatedAt,
+		Id:             p.ID,
+		Type:           gen.ProviderType(p.Type),
+		Name:           p.Name,
+		Endpoints:      p.Endpoints,
+		RegionName:     p.RegionName,
+		Fingerprint:    p.Fingerprint,
+		TlsFingerprint: p.TLSFingerprint,
+		CreatedAt:      p.CreatedAt,
+		UpdatedAt:      p.UpdatedAt,
 	}
 	if p.SiteID != "" {
 		site := p.SiteID

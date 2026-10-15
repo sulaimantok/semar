@@ -5,7 +5,7 @@ import { useIsAdmin } from "@/modules/auth";
 
 import { ApiErrorAlert } from "../../components/api-error-alert";
 import { FormField } from "../../components/form-field";
-import { ENTITY_ID_HINT, ENTITY_ID_PATTERN, PROVIDER_TYPES } from "../../constants/settings";
+import { ENTITY_ID_HINT, ENTITY_ID_PATTERN, PROVIDER_TYPES, TLS_HINT } from "../../constants/settings";
 import { useCreateProvider } from "../../hooks/use-settings-mutations";
 import { useSettingsProviders, useSites } from "../../hooks/use-settings-queries";
 import type { IProviderType } from "../../services/settings-service";
@@ -91,6 +91,7 @@ function CreateProviderForm() {
   const [siteId, setSiteId] = useState("");
   const [endpoints, setEndpoints] = useState("");
   const [regionName, setRegionName] = useState("");
+  const [tlsFingerprint, setTlsFingerprint] = useState("");
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -105,6 +106,7 @@ function CreateProviderForm() {
           .map((s) => s.trim())
           .filter(Boolean),
         regionName: type === "openstack" ? regionName : undefined,
+        tlsFingerprint: tlsFingerprint.trim() || undefined,
       },
       {
         onSuccess: () => {
@@ -112,6 +114,7 @@ function CreateProviderForm() {
           setName("");
           setEndpoints("");
           setRegionName("");
+          setTlsFingerprint("");
         },
       },
     );
@@ -161,6 +164,14 @@ function CreateProviderForm() {
             <input className={styles.input} required value={regionName} onChange={(e) => setRegionName(e.target.value)} />
           </FormField>
         )}
+        <FormField label="TLS fingerprint" optional wide hint={TLS_HINT}>
+          <input
+            className={styles.input}
+            spellCheck={false}
+            value={tlsFingerprint}
+            onChange={(e) => setTlsFingerprint(e.target.value)}
+          />
+        </FormField>
         <div className={styles.actions}>
           <button type="submit" className={styles.primary} disabled={create.isPending}>
             {create.isPending ? "Registering…" : "Register provider"}

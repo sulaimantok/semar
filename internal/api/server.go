@@ -74,7 +74,11 @@ func NewHandler(opts Options) http.Handler {
 		opts.MaxBodyBytes = 1 << 20
 	}
 	if opts.Drivers == nil {
-		opts.Drivers = registry.New
+		r := &registry.Resolver{Secrets: opts.Secrets}
+		if c, ok := opts.Credentials.(registry.CredentialOpener); ok {
+			r.Credentials = c
+		}
+		opts.Drivers = r.Driver
 	}
 	if opts.ValidateTimeout <= 0 {
 		opts.ValidateTimeout = 15 * time.Second

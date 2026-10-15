@@ -14,6 +14,7 @@ import (
 
 	"github.com/sulaimantok/semar/internal/driver/contract"
 	"github.com/sulaimantok/semar/internal/driver/fake"
+	"github.com/sulaimantok/semar/internal/driver/registry"
 	"github.com/sulaimantok/semar/internal/store"
 )
 
@@ -227,5 +228,36 @@ func TestUnimplementedDriverIsNotRetried(t *testing.T) {
 	var appErr *temporal.ApplicationError
 	if err := env.GetWorkflowError(); !errors.As(err, &appErr) || appErr.Type() != errTypeProviderNonRetryable {
 		t.Fatalf("workflow error = %v, want non-retryable", err)
+	}
+}
+
+// resolverFunc adapts a function to DriverResolver.
+type resolverFunc func(ctx context.Context, providerID string) (contract.CloudDriver, error)
+
+func (f resolverFunc) Driver(ctx context.Context, providerID string) (contract.CloudDriver, error) {
+	return f(ctx, providerID)
+}
+
+func TestSyncWithoutCredentialIsSkippedAndRecorded(t *testing.T) {
+	inv := &recordingInventory{}
+	var s testsuite.WorkflowTestSuite
+	env := s.NewTestWorkflowEnvironment()
+	env.RegisterWorkflow(SyncProviderWorkflow)
+	env.RegisterActivity(&Activities{
+		Drivers: resolverFunc(func(context.Context, string) (contract.CloudDriver, error) {
+			return nil, fmt.Errorf("%w: none stored: %w", registry.ErrNoCredential, contract.ErrUnauthorized)
+		}),
+		Inventory: inv,
+	})
+	env.ExecuteWorkflow(SyncProviderWorkflow, SyncInput{ProviderID: "pve-lab"})
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatalf("missing credential failed the workflow: %v", err)
+	}
+	var got InventorySummary
+	if err := env.GetWorkflowResult(&got); err != nil || !got.Skipped {
+		t.Fatalf("summary = %+v, %v", got, err)
+	}
+	if len(inv.failures) != 1 || !strings.Contains(inv.failures[0], "no usable discovery credential") {
+		t.Fatalf("failures = %v", inv.failures)
 	}
 }

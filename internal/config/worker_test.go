@@ -76,3 +76,19 @@ func TestLoadWorkerRejectsInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadWorkerCredentialKEK(t *testing.T) {
+	cfg, err := LoadWorker(workerEnv(nil))
+	if err != nil || cfg.KEKs != nil {
+		t.Fatalf("without SEMAR_KEK: KEKs = %v, %v", cfg.KEKs, err)
+	}
+	cfg, err = LoadWorker(workerEnv(map[string]string{
+		"SEMAR_KEK_ID": "k2", "SEMAR_KEK": b64key(2), "SEMAR_KEK_PREVIOUS": "k1=" + b64key(1),
+	}))
+	if err != nil || cfg.KEKID != "k2" || len(cfg.KEKs) != 2 || cfg.KEKs["k1"][0] != 1 {
+		t.Fatalf("KEKs = %v (current %s), %v", cfg.KEKs, cfg.KEKID, err)
+	}
+	if _, err := LoadWorker(workerEnv(map[string]string{"SEMAR_KEK": "short"})); err == nil {
+		t.Fatal("invalid SEMAR_KEK accepted")
+	}
+}

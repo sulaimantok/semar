@@ -9,7 +9,7 @@
 | Phase | Scope | State |
 |---|---|---|
 | 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment and spikes S1–S3 |
-| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test; web sign-in, global Site/Project filter, Overview with capacity, Compute (VM list with filter chips, VM detail with history) and Settings (providers, sites, projects and mappings, write-only credentials). provider update and connection check (cloud identity, API versions), trusted origins for reverse proxies. Next: operability (metrics, runbooks), OpenStack/Proxmox drivers, console proxy |
+| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test; web sign-in, global Site/Project filter, Overview with capacity, Compute (VM list with filter chips, VM detail with history) and Settings (providers, sites, projects and mappings, write-only credentials). provider update and connection check (cloud identity, API versions), trusted origins for reverse proxies, read-only OpenStack and Proxmox drivers (tested against API fakes; lab verification pending). Next: operability (metrics, runbooks), lab contract tests, console proxy |
 | 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
 
 ## What's Here
@@ -22,7 +22,10 @@
 | Worker | `cmd/semar-worker`, `internal/workflow` | Temporal worker: per-provider sync Schedules reconciled with the registered providers, inventory persisted to PostgreSQL, AES-256-GCM payload codec with key rotation |
 | OpenAPI contract | `api/openapi.yaml` | Source of truth for the frontend ↔ backend contract |
 | Driver contract | `internal/driver/contract` | Provider-neutral model + read-only `CloudDriver` interface |
-| Contract test suite | `internal/driver/contracttest` | Run by every driver (the Fake Driver on each PR; the OpenStack and Proxmox drivers will also run it against a lab) |
+| Contract test suite | `internal/driver/contracttest` | Run by every driver on each PR (OpenStack and Proxmox against in-process API fakes); lab runs come next |
+| OpenStack driver | `internal/driver/openstack` | Keystone v3 (application credential, or system-scoped reader user), Nova with per-call microversions, capacity from Placement, Glance, Neutron, Cinder; plain `net/http` |
+| Proxmox driver | `internal/driver/proxmox` | API token, one `/cluster/resources` call, node failover, guest-agent IPs, TLS certificate pinning for self-signed clusters |
+| Driver registry | `internal/driver/registry` | Builds a provider's driver from its discovery credential; shared by worker and API |
 | Fake Driver | `internal/driver/fake` | Deterministic inventory + fault injection (latency, error rate, fail-next) |
 | Web UI | `web/` | React + Vite + TypeScript + Tailwind; sign-in, global Site/Project filter, Overview (API status, capacity), Compute (VM list and detail), Settings (providers, sites, projects, mappings, credentials); module-based layout, API types generated from the spec (see `web/README.md`) |
 | Store | `internal/store`, `internal/model`, `internal/secret` | PostgreSQL (pgx) with embedded goose migrations: sites, projects, providers, project mappings, users, sessions, role bindings, append-only hash-chained audit log, inventory cache with change history and sync status; credentials sealed with envelope encryption (ADR-0004) |
@@ -145,6 +148,7 @@ In production run semar-api as a non-superuser database role: the append-only gu
 | `SEMAR_DATABASE_URL` | — (required) | PostgreSQL URL; providers are read from and the inventory is written to it |
 | `SEMAR_ORPHAN_AFTER` | `3` | Consecutive syncs a resource may be missing before it is marked orphaned |
 | `SEMAR_SCHEDULE_RECONCILE_INTERVAL` | `1m` | How often sync schedules are reconciled with the registered providers |
+| `SEMAR_KEK_ID`, `SEMAR_KEK`, `SEMAR_KEK_PREVIOUS` | — | The same keys as semar-api; open discovery credentials inside sync activities (ADR-0005). Without them only `fake` providers sync |
 
 ### Inventory sync
 
@@ -156,7 +160,19 @@ The worker serves one site (`SEMAR_SITE_ID`; providers without a site belong to 
 - a resource missing for `SEMAR_ORPHAN_AFTER` consecutive syncs is marked orphaned (never deleted) and restored if it reappears;
 - every create, change, orphaning and restore is appended to `resource_changes`.
 
-Until the OpenStack and Proxmox drivers land, only providers of type `fake` can be synced; other types can be registered, but their syncs and connection checks fail with "driver not implemented".
+### Provider credentials
+
+OpenStack and Proxmox providers need a **discovery** credential (purpose `discovery`, scope `provider`) before they sync. The worker decrypts it inside the sync activity; it never enters a Temporal payload. A provider without one shows the reason in its sync status and is skipped until it is stored.
+
+| Provider | Secret fields | Grants needed for read-only inventory |
+|---|---|---|
+| OpenStack | `application_credential_id`, `application_credential_secret` — lists the credential's own project | `reader` on the project |
+| OpenStack (all projects) | `username`, `password`, optional `user_domain_name` (default `Default`) — system-scoped token | `reader` with system scope |
+| Proxmox VE | `token_id` (`user@realm!name`), `token_secret` | `PVEAuditor` on `/` |
+
+Self-signed Proxmox clusters are trusted by pinning the certificate's SHA-256 fingerprint (`tlsFingerprint` on the provider, from `pvenode cert info`); the pin is checked on every connection, including resumed TLS sessions.
+
+The drivers are verified against in-process fakes of the provider APIs (`go test ./internal/driver/...`); verification against real OpenStack and Proxmox labs is still pending.
 
 ### Changing a provider
 

@@ -16,6 +16,8 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	"github.com/sulaimantok/semar/internal/config"
+	"github.com/sulaimantok/semar/internal/driver/registry"
+	"github.com/sulaimantok/semar/internal/secret"
 	"github.com/sulaimantok/semar/internal/store"
 	"github.com/sulaimantok/semar/internal/version"
 	"github.com/sulaimantok/semar/internal/workflow"
@@ -59,11 +61,22 @@ func run() error {
 	}
 	defer c.Close()
 
+	drivers := workflow.RegisteredDrivers{Providers: st}
+	if cfg.KEKs != nil {
+		keyring, err := secret.NewKeyring(cfg.KEKID, cfg.KEKs)
+		if err != nil {
+			return err
+		}
+		drivers.Resolver = &registry.Resolver{Credentials: st, Secrets: keyring}
+	} else {
+		log.Warn("SEMAR_KEK not set: only fake providers can be synced")
+	}
+
 	taskQueue := workflow.TaskQueueForSite(cfg.SiteID)
 	w := worker.New(c, taskQueue, worker.Options{})
 	w.RegisterWorkflow(workflow.SyncProviderWorkflow)
 	w.RegisterActivity(&workflow.Activities{
-		Drivers:     workflow.RegisteredDrivers{Providers: st},
+		Drivers:     drivers,
 		Inventory:   st,
 		OrphanAfter: cfg.OrphanAfter,
 	})

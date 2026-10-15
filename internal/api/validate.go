@@ -13,8 +13,10 @@ import (
 	"github.com/sulaimantok/semar/internal/store"
 )
 
-// DriverFactory builds the driver for a provider; registry.New by default.
-type DriverFactory func(p model.Provider) (contract.CloudDriver, error)
+// DriverFactory builds the driver for a provider. The default is a
+// registry.Resolver over Options.Credentials and Options.Secrets, the same
+// resolution the worker uses.
+type DriverFactory func(ctx context.Context, p model.Provider) (contract.CloudDriver, error)
 
 func (s *server) ValidateProvider(ctx context.Context, req gen.ValidateProviderRequestObject) (gen.ValidateProviderResponseObject, error) {
 	instance := "/api/v1/providers/" + req.ProviderId + "/validate"
@@ -42,9 +44,15 @@ func (s *server) validateProvider(ctx context.Context, id string) (model.Provide
 	if err != nil {
 		return model.Provider{}, err
 	}
-	d, err := s.opts.Drivers(p)
-	if errors.Is(err, registry.ErrNotImplemented) {
+	d, err := s.opts.Drivers(ctx, p)
+	switch {
+	case errors.Is(err, registry.ErrNotImplemented):
 		return model.Provider{}, &apiError{status: http.StatusNotImplemented, detail: "no driver for provider type " + string(p.Type) + " yet"}
+	case errors.Is(err, registry.ErrNoCredential):
+		return model.Provider{}, &apiError{status: http.StatusUnprocessableEntity, detail: "store a discovery credential for this provider first"}
+	case errors.Is(err, contract.ErrUnauthorized):
+		// The stored credential is malformed for this provider type.
+		return model.Provider{}, &apiError{status: http.StatusUnprocessableEntity, detail: "the discovery credential is incomplete for this provider type"}
 	}
 	if err != nil {
 		return model.Provider{}, err

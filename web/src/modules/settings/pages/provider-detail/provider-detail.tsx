@@ -80,6 +80,8 @@ export function ProviderDetailPage() {
             <dd className={cn(styles.factValue, styles.mono)}>{p.endpoints.join(", ")}</dd>
             <dt className={styles.factLabel}>Fingerprint</dt>
             <dd className={cn(styles.factValue, styles.mono)}>{p.fingerprint}</dd>
+            <dt className={styles.factLabel}>TLS pin</dt>
+            <dd className={cn(styles.factValue, styles.mono)}>{p.tlsFingerprint || "system CAs"}</dd>
           </dl>
         </section>
         <SyncStatusCard providerId={p.id} />

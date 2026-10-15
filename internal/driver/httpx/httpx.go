@@ -1,0 +1,163 @@
+// Package httpx holds the HTTP plumbing shared by provider drivers: JSON
+// requests, classification of failures into the contract sentinels, and
+// TLS certificate pinning for self-signed endpoints.
+package httpx
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/sulaimantok/semar/internal/driver/contract"
+)
+
+// MaxResponseBytes bounds a provider response body.
+const MaxResponseBytes = 64 << 20
+
+// StatusError is a non-2xx answer. It wraps the matching contract sentinel,
+// so callers can use errors.Is(err, contract.ErrUnauthorized) and so on.
+type StatusError struct {
+	Method, URL string
+	Status      int
+	sentinel    error
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("%s %s: HTTP %d: %v", e.Method, e.URL, e.Status, e.sentinel)
+}
+
+func (e *StatusError) Unwrap() error { return e.sentinel }
+
+// Classify maps an HTTP status to a contract sentinel.
+func Classify(status int) error {
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return contract.ErrUnauthorized
+	case http.StatusNotFound:
+		return contract.ErrNotFound
+	case http.StatusTooManyRequests:
+		return contract.ErrRateLimited
+	default:
+		return contract.ErrUnavailable
+	}
+}
+
+// Request describes one JSON call.
+type Request struct {
+	Method string
+	URL    string
+	Header http.Header
+	// Body is marshalled as JSON when non-nil.
+	Body any
+	// AllowMultipleChoices accepts HTTP 300, which OpenStack services use
+	// for their version documents.
+	AllowMultipleChoices bool
+}
+
+// Do sends r and decodes a 2xx JSON answer into out (when non-nil). It
+// returns the response headers. Context cancellation is returned as is;
+// transport failures wrap contract.ErrUnavailable.
+func Do(ctx context.Context, c *http.Client, r Request, out any) (http.Header, error) {
+	var body io.Reader
+	if r.Body != nil {
+		b, err := json.Marshal(r.Body)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, r.Method, r.URL, body)
+	if err != nil {
+		return nil, err
+	}
+	for k, vs := range r.Header {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
+	}
+	req.Header.Set("Accept", "application/json")
+	if r.Body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, fmt.Errorf("%s %s: %w: %w", r.Method, redact(r.URL), contract.ErrUnavailable, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	ok := resp.StatusCode >= 200 && resp.StatusCode <= 299 ||
+		r.AllowMultipleChoices && resp.StatusCode == http.StatusMultipleChoices
+	if !ok {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		return resp.Header, &StatusError{Method: r.Method, URL: redact(r.URL), Status: resp.StatusCode, sentinel: Classify(resp.StatusCode)}
+	}
+	if out == nil {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		return resp.Header, nil
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, MaxResponseBytes)).Decode(out); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, fmt.Errorf("%s %s: decode: %w: %w", r.Method, redact(r.URL), contract.ErrUnavailable, err)
+	}
+	return resp.Header, nil
+}
+
+// redact drops the query string, which can carry markers or filters that
+// do not belong in logs.
+func redact(u string) string {
+	if i := strings.IndexByte(u, '?'); i >= 0 {
+		return u[:i]
+	}
+	return u
+}
+
+// NormalizeFingerprint turns "AB:CD:…" or "abcd…" into lowercase hex.
+func NormalizeFingerprint(fp string) (string, error) {
+	h := strings.ToLower(strings.NewReplacer(":", "", " ", "").Replace(strings.TrimSpace(fp)))
+	if b, err := hex.DecodeString(h); err != nil || len(b) != sha256.Size {
+		return "", errors.New("TLS fingerprint must be a SHA-256 certificate fingerprint (64 hex digits, colons allowed)")
+	}
+	return h, nil
+}
+
+// Client returns an HTTP client for one provider. With a TLS fingerprint
+// the server certificate is pinned instead of verified against the system
+// roots, which is how self-signed Proxmox certificates are trusted.
+func Client(timeout time.Duration, tlsFingerprint string) (*http.Client, error) {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	if tlsFingerprint != "" {
+		want, err := NormalizeFingerprint(tlsFingerprint)
+		if err != nil {
+			return nil, err
+		}
+		// Verification is replaced, not skipped: the leaf must match the pin.
+		// VerifyConnection (unlike VerifyPeerCertificate) also runs on
+		// resumed sessions, so a resumed session cannot bypass the pin.
+		tr.TLSClientConfig.InsecureSkipVerify = true //nolint:gosec // G402: certificate pinned in VerifyConnection
+		tr.TLSClientConfig.VerifyConnection = func(cs tls.ConnectionState) error {
+			if len(cs.PeerCertificates) == 0 {
+				return errors.New("no server certificate")
+			}
+			sum := sha256.Sum256(cs.PeerCertificates[0].Raw)
+			if hex.EncodeToString(sum[:]) != want {
+				return errors.New("server certificate does not match the pinned TLS fingerprint")
+			}
+			return nil
+		}
+	}
+	return &http.Client{Timeout: timeout, Transport: tr}, nil
+}
