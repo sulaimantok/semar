@@ -38,6 +38,9 @@ type API struct {
 	// state-changing requests, for deployments behind a reverse proxy that
 	// rewrites Host. Empty compares Origin with the request's Host.
 	TrustedOrigins []string
+	// MetricsAddr is the listen address of the separate /metrics listener;
+	// empty disables it.
+	MetricsAddr string
 }
 
 // LoadAPI reads SEMAR_* variables via getenv (os.Getenv in production).
@@ -82,6 +85,7 @@ func LoadAPI(getenv func(string) string) (API, error) {
 		}
 		cfg.TrustedOrigins = origins
 	}
+	cfg.MetricsAddr = getenv("SEMAR_METRICS_ADDR")
 	cfg.DatabaseURL = getenv("SEMAR_DATABASE_URL")
 	if cfg.DatabaseURL == "" {
 		return API{}, errors.New("SEMAR_DATABASE_URL is required (postgres://user:password@host:5432/semar)")

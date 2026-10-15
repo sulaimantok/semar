@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/sulaimantok/semar/internal/api/gen"
+	"github.com/sulaimantok/semar/internal/metrics"
 	"github.com/sulaimantok/semar/internal/version"
 )
 
@@ -153,4 +154,27 @@ func decodeProblem(t *testing.T, rec *httptest.ResponseRecorder) gen.Problem {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestHTTPMetricsUseRoutePatterns(t *testing.T) {
+	reg := metrics.NewRegistry("test", "test")
+	a := newAnonymousAPI(t, func(o *Options) { o.Metrics = reg })
+	a.expect(a.call("GET", "/api/v1/providers/pve-lab", ""), http.StatusUnauthorized, nil)
+	a.expect(a.call("GET", "/api/v1/providers/os-a", ""), http.StatusUnauthorized, nil)
+	a.expect(a.call("GET", "/no/such/path", ""), http.StatusNotFound, nil)
+
+	rec := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), "GET", "/metrics", nil))
+	out := rec.Body.String()
+	for _, want := range []string{
+		`semar_http_requests_total{method="GET",route="GET /api/v1/providers/{providerId}",status="401"} 2`,
+		`semar_http_requests_total{method="GET",route="unmatched",status="404"} 1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "pve-lab") {
+		t.Error("raw path values leaked into metric labels")
+	}
 }

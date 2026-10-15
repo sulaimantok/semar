@@ -12,6 +12,8 @@ import (
 
 	"github.com/sulaimantok/semar/internal/driver/contract"
 	"github.com/sulaimantok/semar/internal/driver/registry"
+	"github.com/sulaimantok/semar/internal/metrics"
+	"github.com/sulaimantok/semar/internal/requestid"
 	"github.com/sulaimantok/semar/internal/store"
 )
 
@@ -91,12 +93,67 @@ type Activities struct {
 	Inventory   InventoryStore
 	OrphanAfter int
 	Now         func() time.Time
+	// Metrics records sync outcomes; nil disables them.
+	Metrics *SyncMetrics
+}
+
+// SyncMetrics are the worker's inventory sync metrics.
+type SyncMetrics struct {
+	syncs       *metrics.Vec
+	duration    *metrics.Histogram
+	lastSuccess *metrics.Vec
+	resources   *metrics.Vec
+}
+
+// NewSyncMetrics registers the sync metrics in reg.
+func NewSyncMetrics(reg *metrics.Registry) *SyncMetrics {
+	return &SyncMetrics{
+		syncs: reg.Counter("semar_inventory_syncs_total",
+			"Inventory syncs by provider and outcome (success, failure, skipped, stale).", "provider", "outcome"),
+		duration: reg.Histogram("semar_inventory_sync_duration_seconds",
+			"Duration of inventory syncs, listing and persisting.", metrics.SyncBuckets, "provider"),
+		lastSuccess: reg.Gauge("semar_inventory_last_success_timestamp_seconds",
+			"Time of the last successful sync per provider.", "provider"),
+		resources: reg.Gauge("semar_inventory_vms",
+			"VMs reported by the last successful sync per provider.", "provider"),
+	}
+}
+
+func (m *SyncMetrics) record(provider, outcome string, took time.Duration, vms int) {
+	if m == nil {
+		return
+	}
+	m.syncs.Inc(provider, outcome)
+	if outcome == "success" || outcome == "stale" {
+		m.duration.Observe(took.Seconds(), provider)
+	}
+	if outcome == "success" {
+		m.lastSuccess.Set(float64(time.Now().Unix()), provider)
+		m.resources.Set(float64(vms), provider)
+	}
 }
 
 // CollectInventory reads the provider's full inventory and applies it to the
 // inventory cache (roadmap §3.6). Listing and persisting happen in one
 // activity so a large inventory never travels through Temporal payloads.
-func (a *Activities) CollectInventory(ctx context.Context, in SyncInput) (InventorySummary, error) {
+func (a *Activities) CollectInventory(ctx context.Context, in SyncInput) (s InventorySummary, err error) {
+	start := time.Now()
+	defer func() {
+		outcome := "success"
+		switch {
+		case err != nil:
+			outcome = "failure"
+		case s.Skipped:
+			outcome = "skipped"
+		case s.Stale:
+			outcome = "stale"
+		}
+		a.Metrics.record(in.ProviderID, outcome, time.Since(start), s.VMs)
+	}()
+	// Provider calls carry the run ID as correlation ID, so a sync can be
+	// traced from Temporal to the provider's logs (X-OpenStack-Request-ID).
+	ctx = requestid.With(ctx, runID(ctx))
+
 	d, err := a.Drivers.Driver(ctx, in.ProviderID)
 	if errors.Is(err, ErrUnknownProvider) {
 		// Removed since the schedule fired: expected, not a failure.
@@ -134,7 +191,7 @@ func (a *Activities) CollectInventory(ctx context.Context, in SyncInput) (Invent
 		a.recordFailure(ctx, in.ProviderID, err)
 		return InventorySummary{}, err
 	}
-	s := InventorySummary{
+	s = InventorySummary{
 		ProviderID:  in.ProviderID,
 		Hypervisors: len(inv.hypervisors),
 		VMs:         len(inv.vms),
@@ -165,6 +222,17 @@ func (a *Activities) CollectInventory(ctx context.Context, in SyncInput) (Invent
 	}
 	s.Created, s.Updated, s.Orphaned, s.Restored = res.Created, res.Updated, res.Orphaned, res.Restored
 	return s, nil
+}
+
+// runID returns the workflow run ID of the current activity, or "" outside
+// an activity (direct calls in tests).
+func runID(ctx context.Context) (id string) {
+	defer func() {
+		if recover() != nil {
+			id = ""
+		}
+	}()
+	return activity.GetInfo(ctx).WorkflowExecution.RunID
 }
 
 func (a *Activities) recordFailure(ctx context.Context, providerID string, cause error) {

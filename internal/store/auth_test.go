@@ -178,3 +178,32 @@ func TestConcurrentAuditAppendsKeepOneChain(t *testing.T) {
 		t.Fatalf("VerifyAuditChain = %d, %v", n, err)
 	}
 }
+
+func TestResetPasswordEnablesAndEndsSessions(t *testing.T) {
+	st := storetest.New(t)
+	ctx := context.Background()
+	if _, err := st.EnsureBootstrapAdmin(ctx, "admin", "old-hash"); err != nil {
+		t.Fatal(err)
+	}
+	admin, _ := st.UserByUsername(ctx, "admin")
+	if err := st.SetUserDisabled(ctx, admin.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		_, h, _ := auth.NewSessionToken()
+		if err := st.CreateSession(ctx, h, admin.ID, time.Now().Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ended, err := st.ResetPassword(ctx, "admin", "new-hash")
+	if err != nil || ended != 2 {
+		t.Fatalf("ResetPassword = %d, %v", ended, err)
+	}
+	u, _ := st.UserByUsername(ctx, "admin")
+	if u.PasswordHash != "new-hash" || u.Disabled {
+		t.Fatalf("user after reset = %+v", u)
+	}
+	if _, err := st.ResetPassword(ctx, "nobody", "h"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown user: %v", err)
+	}
+}

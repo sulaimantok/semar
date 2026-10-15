@@ -15,6 +15,8 @@ import (
 	"github.com/sulaimantok/semar/internal/driver/contract"
 	"github.com/sulaimantok/semar/internal/driver/fake"
 	"github.com/sulaimantok/semar/internal/driver/registry"
+	"github.com/sulaimantok/semar/internal/metrics"
+	"github.com/sulaimantok/semar/internal/requestid"
 	"github.com/sulaimantok/semar/internal/store"
 )
 
@@ -259,5 +261,48 @@ func TestSyncWithoutCredentialIsSkippedAndRecorded(t *testing.T) {
 	}
 	if len(inv.failures) != 1 || !strings.Contains(inv.failures[0], "no usable discovery credential") {
 		t.Fatalf("failures = %v", inv.failures)
+	}
+}
+
+// ctxDriver records the request ID its ListVMs call carries.
+type ctxDriver struct {
+	*fake.Driver
+	seen string
+}
+
+func (d *ctxDriver) ListVMs(ctx context.Context) ([]contract.VirtualMachine, error) {
+	d.seen = requestid.From(ctx)
+	return d.Driver.ListVMs(ctx)
+}
+
+func TestSyncRecordsMetricsAndCorrelationID(t *testing.T) {
+	reg := metrics.NewRegistry("test", "test")
+	m := NewSyncMetrics(reg)
+	d := &ctxDriver{Driver: fake.New(fake.Config{Hypervisors: 1, VMsPerHypervisor: 4})}
+	var s testsuite.WorkflowTestSuite
+	env := s.NewTestWorkflowEnvironment()
+	env.RegisterWorkflow(SyncProviderWorkflow)
+	env.RegisterActivity(&Activities{Drivers: StaticDrivers{"fake-1": d}, Inventory: &recordingInventory{}, Metrics: m})
+	env.ExecuteWorkflow(SyncProviderWorkflow, SyncInput{ProviderID: "fake-1"})
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatal(err)
+	}
+	if d.seen == "" {
+		t.Fatal("provider calls carry no correlation ID")
+	}
+	if got := m.syncs.Value("fake-1", "success"); got != 1 {
+		t.Fatalf("success syncs = %v", got)
+	}
+	if got := m.resources.Value("fake-1"); got != 4 {
+		t.Fatalf("VM gauge = %v, want 4", got)
+	}
+
+	failing := &countingDriver{Driver: fake.New(fake.Config{}), vmsErr: fmt.Errorf("x: %w", contract.ErrUnauthorized)}
+	env = s.NewTestWorkflowEnvironment()
+	env.RegisterWorkflow(SyncProviderWorkflow)
+	env.RegisterActivity(&Activities{Drivers: StaticDrivers{"fake-2": failing}, Inventory: &recordingInventory{}, Metrics: m})
+	env.ExecuteWorkflow(SyncProviderWorkflow, SyncInput{ProviderID: "fake-2"})
+	if got := m.syncs.Value("fake-2", "failure"); got != 1 {
+		t.Fatalf("failure syncs = %v", got)
 	}
 }
