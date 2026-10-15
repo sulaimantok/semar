@@ -87,6 +87,11 @@ services:
       SEMAR_PAYLOAD_KEY: ${SEMAR_PAYLOAD_KEY:?set SEMAR_PAYLOAD_KEY in .env}
       # During key rotation: "k1=<old base64 key>" (comma-separated).
       SEMAR_PAYLOAD_PREVIOUS_KEYS: ${SEMAR_PAYLOAD_PREVIOUS_KEYS:-}
+      # Opens provider discovery credentials inside sync activities; the
+      # same keys as semar-api (ADR-0005).
+      SEMAR_KEK_ID: ${SEMAR_KEK_ID:-k1}
+      SEMAR_KEK: ${SEMAR_KEK:?set SEMAR_KEK in .env}
+      SEMAR_KEK_PREVIOUS: ${SEMAR_KEK_PREVIOUS:-}
     depends_on:
       temporal-namespace:
         condition: service_completed_successfully

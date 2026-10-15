@@ -353,9 +353,12 @@ type Provider struct {
 	RegionName string   `json:"regionName"`
 
 	// SiteId Examples: os-jkt
-	SiteId    *EntityId    `json:"siteId,omitempty"`
-	Type      ProviderType `json:"type"`
-	UpdatedAt time.Time    `json:"updatedAt"`
+	SiteId *EntityId `json:"siteId,omitempty"`
+
+	// TlsFingerprint Pinned SHA-256 certificate fingerprint (lowercase hex); empty when the system roots are used.
+	TlsFingerprint string       `json:"tlsFingerprint"`
+	Type           ProviderType `json:"type"`
+	UpdatedAt      time.Time    `json:"updatedAt"`
 
 	// ValidatedAt Time of the last successful connection check; absent until checked.
 	ValidatedAt *time.Time `json:"validatedAt,omitempty"`
@@ -374,8 +377,14 @@ type ProviderCreate struct {
 	RegionName *string `json:"regionName,omitempty"`
 
 	// SiteId Examples: os-jkt
-	SiteId *EntityId    `json:"siteId,omitempty"`
-	Type   ProviderType `json:"type"`
+	SiteId *EntityId `json:"siteId,omitempty"`
+
+	// TlsFingerprint SHA-256 fingerprint of the server certificate to pin instead of
+	// verifying it against the system roots, for self-signed endpoints
+	// (Proxmox: `pvenode cert info`). Colons are optional; an empty
+	// string removes the pin.
+	TlsFingerprint *string      `json:"tlsFingerprint,omitempty"`
+	Type           ProviderType `json:"type"`
 }
 
 // ProviderList defines model for ProviderList.
@@ -394,6 +403,12 @@ type ProviderUpdate struct {
 
 	// SiteId Site ID; an empty string removes the provider from its site.
 	SiteId *string `json:"siteId,omitempty"`
+
+	// TlsFingerprint SHA-256 fingerprint of the server certificate to pin instead of
+	// verifying it against the system roots, for self-signed endpoints
+	// (Proxmox: `pvenode cert info`). Colons are optional; an empty
+	// string removes the pin.
+	TlsFingerprint *string `json:"tlsFingerprint,omitempty"`
 }
 
 // Resource defines model for Resource.

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 
 import { ApiErrorAlert } from "../../../../components/api-error-alert";
 import { FormField } from "../../../../components/form-field";
+import { TLS_HINT } from "../../../../constants/settings";
 import { useUpdateProvider } from "../../../../hooks/use-settings-mutations";
 import { useSites } from "../../../../hooks/use-settings-queries";
 import type { IProvider, IProviderUpdate } from "../../../../services/settings-service";
@@ -28,6 +29,7 @@ export function EditProviderForm({ provider, onDone }: IEditProviderFormProps) {
   const [siteId, setSiteId] = useState(provider.siteId ?? "");
   const [endpoints, setEndpoints] = useState(provider.endpoints.join("\n"));
   const [regionName, setRegionName] = useState(provider.regionName);
+  const [tlsFingerprint, setTlsFingerprint] = useState(provider.tlsFingerprint ?? "");
 
   const patch: IProviderUpdate = {};
   if (name.trim() !== provider.name) patch.name = name;
@@ -35,6 +37,7 @@ export function EditProviderForm({ provider, onDone }: IEditProviderFormProps) {
   const newEndpoints = lines(endpoints);
   if (newEndpoints.join("\n") !== provider.endpoints.join("\n")) patch.endpoints = newEndpoints;
   if (provider.type === "openstack" && regionName.trim() !== provider.regionName) patch.regionName = regionName;
+  if (tlsFingerprint.trim() !== (provider.tlsFingerprint ?? "")) patch.tlsFingerprint = tlsFingerprint.trim();
   const changed = Object.keys(patch).length > 0;
   const addressChanged = patch.endpoints !== undefined || patch.regionName !== undefined;
 
@@ -71,6 +74,14 @@ export function EditProviderForm({ provider, onDone }: IEditProviderFormProps) {
             <input className={styles.input} required value={regionName} onChange={(e) => setRegionName(e.target.value)} />
           </FormField>
         )}
+        <FormField label="TLS fingerprint" optional wide hint={TLS_HINT}>
+          <input
+            className={styles.input}
+            spellCheck={false}
+            value={tlsFingerprint}
+            onChange={(e) => setTlsFingerprint(e.target.value)}
+          />
+        </FormField>
         {addressChanged && (
           <p className={styles.note} role="note">
             Changing the address clears the last connection check; run it again after saving.

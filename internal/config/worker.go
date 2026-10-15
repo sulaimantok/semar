@@ -31,6 +31,11 @@ type Worker struct {
 	// ReconcileInterval is how often sync schedules are reconciled with the
 	// providers in the database.
 	ReconcileInterval time.Duration
+	// KEKID and KEKs decrypt provider discovery credentials inside sync
+	// activities (ADR-0005). Optional: without them only fake providers can
+	// be synced.
+	KEKID string
+	KEKs  map[string][]byte
 }
 
 // LoadWorker reads SEMAR_* variables via getenv (os.Getenv in production).
@@ -90,6 +95,16 @@ func LoadWorker(getenv func(string) string) (Worker, error) {
 		return Worker{}, err
 	}
 	cfg.PayloadKeys = keys
+
+	if getenv("SEMAR_KEK") != "" {
+		cfg.KEKID = "k1"
+		setString(getenv, "SEMAR_KEK_ID", &cfg.KEKID)
+		keks, err := loadKeys(getenv, cfg.KEKID, "SEMAR_KEK", "SEMAR_KEK_PREVIOUS")
+		if err != nil {
+			return Worker{}, err
+		}
+		cfg.KEKs = keks
+	}
 
 	return cfg, nil
 }

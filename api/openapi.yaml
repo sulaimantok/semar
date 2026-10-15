@@ -910,7 +910,7 @@ components:
       enum: [openstack, proxmox, fake]
     Provider:
       type: object
-      required: [id, type, name, endpoints, regionName, fingerprint, createdAt, updatedAt]
+      required: [id, type, name, endpoints, regionName, fingerprint, tlsFingerprint, createdAt, updatedAt]
       properties:
         id:
           $ref: "#/components/schemas/EntityId"
@@ -929,6 +929,9 @@ components:
         fingerprint:
           type: string
           description: Stable identity of the backing cloud, derived by the server.
+        tlsFingerprint:
+          type: string
+          description: Pinned SHA-256 certificate fingerprint (lowercase hex); empty when the system roots are used.
         cloudFingerprint:
           type: string
           description: Identity reported by the driver on the last successful connection check.
@@ -970,6 +973,13 @@ components:
         regionName:
           type: string
           description: OpenStack region; empty for Proxmox.
+        tlsFingerprint:
+          type: string
+          description: |
+            SHA-256 fingerprint of the server certificate to pin instead of
+            verifying it against the system roots, for self-signed endpoints
+            (Proxmox: `pvenode cert info`). Colons are optional; an empty
+            string removes the pin.
     ProviderUpdate:
       type: object
       minProperties: 1
@@ -989,6 +999,13 @@ components:
             format: uri
         regionName:
           type: string
+        tlsFingerprint:
+          type: string
+          description: |
+            SHA-256 fingerprint of the server certificate to pin instead of
+            verifying it against the system roots, for self-signed endpoints
+            (Proxmox: `pvenode cert info`). Colons are optional; an empty
+            string removes the pin.
     ProviderList:
       type: object
       required: [items]

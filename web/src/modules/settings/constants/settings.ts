@@ -25,8 +25,13 @@ export const CREDENTIAL_PURPOSES: readonly { value: ICredentialPurpose; label: s
   { value: "cluster", label: "Cluster", scopeHint: "cluster:<id>" },
 ];
 
+export const TLS_HINT =
+  "SHA-256 certificate fingerprint to pin for a self-signed endpoint (Proxmox: pvenode cert info). Leave empty to use trusted CAs.";
+
 /** Secret field names expected by each provider type's driver. */
 export const SECRET_FIELDS: Record<IProviderType, readonly string[]> = {
+  // An application credential; a system-scoped reader user
+  // (username/password) can be stored through the API instead.
   openstack: ["application_credential_id", "application_credential_secret"],
   proxmox: ["token_id", "token_secret"],
   fake: ["token"],

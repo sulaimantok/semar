@@ -11,6 +11,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/sulaimantok/semar/internal/driver/contract"
+	"github.com/sulaimantok/semar/internal/driver/registry"
 	"github.com/sulaimantok/semar/internal/store"
 )
 
@@ -103,7 +104,20 @@ func (a *Activities) CollectInventory(ctx context.Context, in SyncInput) (Invent
 		return InventorySummary{ProviderID: in.ProviderID, Skipped: true}, nil
 	}
 	if err != nil {
-		if errors.Is(err, ErrDriverNotImplemented) {
+		switch {
+		case errors.Is(err, ErrDriverNotImplemented):
+			return InventorySummary{}, temporal.NewNonRetryableApplicationError(err.Error(), errTypeProviderNonRetryable, err)
+		case errors.Is(err, registry.ErrNoCredential):
+			// A configuration gap, not a failing sync: say so in the sync
+			// status and skip until a discovery credential is stored, without
+			// an activity error on every interval.
+			activity.GetLogger(ctx).Warn("no discovery credential; sync skipped", "provider", in.ProviderID)
+			a.recordFailure(ctx, in.ProviderID, err)
+			return InventorySummary{ProviderID: in.ProviderID, Skipped: true}, nil
+		case errors.Is(err, contract.ErrUnauthorized):
+			// A stored credential that cannot be used (malformed for this
+			// provider type): retrying cannot help.
+			a.recordFailure(ctx, in.ProviderID, err)
 			return InventorySummary{}, temporal.NewNonRetryableApplicationError(err.Error(), errTypeProviderNonRetryable, err)
 		}
 		return InventorySummary{}, temporal.NewApplicationErrorWithCause(err.Error(), errTypeProviderRetryable, err)

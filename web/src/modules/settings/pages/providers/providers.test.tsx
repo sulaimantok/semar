@@ -15,6 +15,7 @@ const provider = {
   endpoints: ["https://pve1.example.com:8006"],
   regionName: "",
   fingerprint: "fp",
+  tlsFingerprint: "",
   createdAt: "",
   updatedAt: "",
 };
@@ -68,5 +69,30 @@ describe("ProvidersPage", () => {
       endpoints: ["https://keystone.example.com:5000/v3"],
       regionName: "RegionOne",
     });
+  });
+
+  it("sends a pinned TLS fingerprint for a self-signed Proxmox cluster", async () => {
+    let sent: Record<string, unknown> | undefined;
+    stub(admin, (b) => (sent = b as Record<string, unknown>));
+    renderRoutes([{ path: "/settings/providers", element: <ProvidersPage /> }], "/settings/providers");
+
+    await screen.findByText("Register a provider");
+    fireEvent.change(screen.getByLabelText(/^ID/), { target: { value: "pve-a" } });
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "PVE A" } });
+    fireEvent.change(screen.getByLabelText(/^Type/), { target: { value: "proxmox" } });
+    fireEvent.change(screen.getByLabelText(/^Endpoints/), { target: { value: "https://pve1.example.com:8006" } });
+    fireEvent.change(screen.getByLabelText(/^TLS fingerprint/), { target: { value: " AB:CD " } });
+    expect(screen.queryByLabelText(/^Region/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Register provider" }));
+
+    await vi.waitFor(() =>
+      expect(sent).toEqual({
+        id: "pve-a",
+        name: "PVE A",
+        type: "proxmox",
+        endpoints: ["https://pve1.example.com:8006"],
+        tlsFingerprint: "AB:CD",
+      }),
+    );
   });
 });

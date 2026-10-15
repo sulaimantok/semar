@@ -67,7 +67,7 @@ func TestUpdateProvider(t *testing.T) {
 func TestValidateProvider(t *testing.T) {
 	var next scriptedDriver
 	a := newSettingsAPI(t, func(o *Options) {
-		o.Drivers = func(p model.Provider) (contract.CloudDriver, error) {
+		o.Drivers = func(ctx context.Context, p model.Provider) (contract.CloudDriver, error) {
 			if p.ID == "real" {
 				return registry.New(p)
 			}

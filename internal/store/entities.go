@@ -125,21 +125,21 @@ func (s *Store) CreateProvider(ctx context.Context, p model.Provider) (model.Pro
 	return created, mapErr(err)
 }
 
-// UpdateProvider changes an active provider's name, site, endpoints and
-// region; ID and type are immutable. p.Fingerprint must be re-derived by
+// UpdateProvider changes an active provider's name, site, endpoints, region
+// and pinned TLS fingerprint; ID and type are immutable. p.Fingerprint must be re-derived by
 // the caller. A change of endpoints or region clears the connection check,
 // since the new address has not been verified yet. Moving onto another
 // provider's fingerprint fails with ErrConflict.
 func (s *Store) UpdateProvider(ctx context.Context, p model.Provider) (model.Provider, error) {
 	row := s.pool.QueryRow(ctx, `
 		UPDATE providers SET
-		  name = $2, site_id = $3, endpoints = $4, region_name = $5, fingerprint = $6,
+		  name = $2, site_id = $3, endpoints = $4, region_name = $5, fingerprint = $6, tls_fingerprint = $7,
 		  cloud_fingerprint = CASE WHEN endpoints = $4 AND region_name = $5 THEN cloud_fingerprint END,
 		  validated_at      = CASE WHEN endpoints = $4 AND region_name = $5 THEN validated_at END,
 		  updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
 		RETURNING `+providerColumns,
-		p.ID, p.Name, nullIfEmpty(p.SiteID), p.Endpoints, p.RegionName, p.Fingerprint)
+		p.ID, p.Name, nullIfEmpty(p.SiteID), p.Endpoints, p.RegionName, p.Fingerprint, p.TLSFingerprint)
 	updated, err := scanProvider(row)
 	return updated, mapErr(err)
 }

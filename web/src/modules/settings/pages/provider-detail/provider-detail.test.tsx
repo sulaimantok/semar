@@ -14,6 +14,7 @@ const provider = {
   endpoints: ["https://pve1.example.com:8006"],
   regionName: "",
   fingerprint: "proxmox:abc",
+  tlsFingerprint: "",
   createdAt: "",
   updatedAt: "",
 };
