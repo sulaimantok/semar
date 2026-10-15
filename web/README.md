@@ -7,8 +7,10 @@ React + Vite + TypeScript + Tailwind single-page app for SEMAR.
 | Route | Module | What it shows |
 |---|---|---|
 | `/login` | `auth` | Sign-in (uniform error messages, rate-limit notice, same-app redirects only) |
-| `/` | `system` | API status, build, and the Capacity Overview from `compute` |
-| `/compute` | `compute` | VM list from the inventory cache with data age, provider filter and cursor paging |
+| every page | `global-filter` | Site / Project filter above the page, persisted per browser, default All, with an active indicator and reset |
+| `/` | `system` | API status, build, and the Capacity Overview from `compute` (follows the global filter) |
+| `/compute` | `compute` | VM list from the inventory cache with data age, Provider / Site / Project / Arch columns, removable filter chips and cursor paging |
+| `/compute/vms/:providerId/:externalId` | `compute` | VM detail: location and ownership, specification, data age, change history; orphaned VMs flagged |
 | `/settings/providers`, `/settings/providers/:id` | `settings` | Providers, their sync status, write-only credentials, removal |
 | `/settings/sites`, `/settings/projects` | `settings` | Sites; projects and their mappings to OpenStack projects / Proxmox pools |
 

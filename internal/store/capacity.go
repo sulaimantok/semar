@@ -10,6 +10,8 @@ import (
 // are never counted.
 type CapacityFilter struct {
 	ProviderID string
+	// SiteID narrows both aggregates to providers of this site.
+	SiteID string
 	// ProjectIDs narrows the VM aggregate to these projects; nil means no
 	// narrowing. Hypervisor capacity is not per project, so it is skipped
 	// when this is set.
@@ -68,6 +70,7 @@ func (s *Store) CapacitySummary(ctx context.Context, f CapacityFilter) (Capacity
 	vmWhere := `r.kind = 'vm' AND r.orphaned_at IS NULL
 		AND (` + q.add(f.ProviderID) + ` = '' OR r.provider_id = ` + q.last() + `)
 		AND (` + q.add(f.ProjectIDs) + `::text[] IS NULL OR r.project_id = ANY(` + q.last() + `))
+		AND ` + siteClause(q, f.SiteID) + `
 		AND ` + f.VMs.clause(q)
 	err := s.pool.QueryRow(ctx, `
 		SELECT count(*), `+specNumber("vcpus")+`, `+specNumber("memoryMiB")+`
@@ -88,7 +91,8 @@ func (s *Store) CapacitySummary(ctx context.Context, f CapacityFilter) (Capacity
 	h := &HypervisorCapacity{}
 	hq := &queryArgs{}
 	hvWhere := `r.kind = 'hypervisor' AND r.orphaned_at IS NULL
-		AND (` + hq.add(f.ProviderID) + ` = '' OR r.provider_id = ` + hq.last() + `)`
+		AND (` + hq.add(f.ProviderID) + ` = '' OR r.provider_id = ` + hq.last() + `)
+		AND ` + siteClause(hq, f.SiteID)
 	err = s.pool.QueryRow(ctx, `
 		SELECT count(*), `+specNumber("vcpus")+`, `+specNumber("vcpusUsed")+`,
 		       `+specNumber("memoryMiB")+`, `+specNumber("memoryMiBUsed")+`

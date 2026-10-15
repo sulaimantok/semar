@@ -22,6 +22,11 @@ export const vmListStyles = {
   dotWarn: "bg-warn",
   dotError: "bg-danger",
   badge: "rounded px-1.5 py-0.5 text-xs bg-surface text-muted",
+  orphanBadge: "ml-1.5 rounded px-1.5 py-0.5 text-xs bg-warn/15 text-warn",
+  link: "hover:text-accent hover:underline focus-visible:outline-2 focus-visible:outline-accent",
+  chips: "flex flex-wrap gap-2",
+  chip: "inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-0.5 text-xs font-medium text-accent hover:bg-accent/20 focus-visible:outline-2 focus-visible:outline-accent",
+  chipIcon: "size-3",
   footer: "flex items-center justify-between text-sm text-muted",
   more:
     "rounded-md border border-border bg-panel px-3 py-1.5 text-sm hover:bg-surface focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50",

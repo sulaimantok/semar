@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { globalFilterStore } from "@/modules/global-filter";
 import { json, renderRoutes, stubApi } from "@/shared/test/render";
 
 import { VmListPage } from "./vm-list";
@@ -22,6 +23,8 @@ const vm = (id: string, extra: Record<string, unknown> = {}) => ({
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  localStorage.clear();
+  globalFilterStore.reload();
 });
 
 describe("VmListPage", () => {
@@ -67,5 +70,38 @@ describe("VmListPage", () => {
     });
     renderRoutes([{ path: "/compute", element: <VmListPage /> }], "/compute");
     expect(await screen.findByText(/No virtual machines yet/)).toBeTruthy();
+  });
+
+  it("applies global and page filters, shows them as chips and links to the detail page", async () => {
+    globalFilterStore.set({ siteId: "site-a", projectId: "payment" });
+    const calls = stubApi({
+      "GET /api/v1/providers": () =>
+        json(200, {
+          items: [{ id: "pve-lab", name: "PVE Lab", type: "proxmox", siteId: "site-a", endpoints: [], regionName: "", fingerprint: "", createdAt: "", updatedAt: "" }],
+        }),
+      "GET /api/v1/sites": () => json(200, { items: [{ id: "site-a", name: "Site A", labels: {}, createdAt: "", updatedAt: "" }] }),
+      "GET /api/v1/projects": () => json(200, { items: [{ id: "payment", name: "Payment", createdAt: "", updatedAt: "" }] }),
+      "GET /api/v1/resources": () => json(200, { items: [vm("100", { projectId: "payment" })] }),
+    });
+    renderRoutes([{ path: "/compute", element: <VmListPage /> }], "/compute");
+
+    const row = (await screen.findByText("vm-100")).closest("tr")!;
+    expect(await within(row).findByText("Site A")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "vm-100" }).getAttribute("href")).toBe("/compute/vms/pve-lab/100");
+
+    fireEvent.change(screen.getByLabelText("Arch"), { target: { value: "arm64" } });
+    const chips = screen.getByRole("list", { name: "Active filters" });
+    expect(await within(chips).findByText("Site: Site A")).toBeTruthy();
+    expect(within(chips).getByText("Project: Payment")).toBeTruthy();
+    expect(within(chips).getByText("Arch: arm64")).toBeTruthy();
+
+    await vi.waitFor(() => {
+      const last = calls.filter((c) => new URL(c.url).pathname === "/api/v1/resources").at(-1)!;
+      const q = new URL(last.url).searchParams;
+      expect([q.get("siteId"), q.get("projectId"), q.get("arch")]).toEqual(["site-a", "payment", "arm64"]);
+    });
+
+    fireEvent.click(within(chips).getByRole("button", { name: "Remove filter Project: Payment" }));
+    expect(globalFilterStore.get()).toEqual({ siteId: "site-a" });
   });
 });

@@ -415,10 +415,20 @@ func (v Visibility) clause(q *queryArgs) string {
 		            AND (g.provider_id = '' OR g.provider_id = r.provider_id)))`
 }
 
+// siteClause admits resources of providers in siteID; "" admits all.
+func siteClause(q *queryArgs, siteID string) string {
+	return `(` + q.add(siteID) + ` = '' OR r.provider_id IN (
+		SELECT id FROM providers WHERE site_id = ` + q.last() + ` AND deleted_at IS NULL))`
+}
+
 // ResourceFilter selects resources for ListResources.
 type ResourceFilter struct {
 	Kind       ResourceKind
 	ProviderID string
+	// SiteID narrows results to providers of this site.
+	SiteID string
+	// Arch narrows results to one architecture (amd64, arm64, unknown).
+	Arch string
 	// ProjectIDs narrows results to these projects (a user-chosen filter);
 	// nil means no narrowing. RBAC is Visibility, not this field.
 	ProjectIDs []string
@@ -448,6 +458,8 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 		WHERE kind = ` + q.add(string(f.Kind)) + `
 		  AND (` + q.add(f.ProviderID) + ` = '' OR provider_id = ` + q.last() + `)
 		  AND (` + q.add(f.ProjectIDs) + `::text[] IS NULL OR project_id = ANY(` + q.last() + `))
+		  AND ` + siteClause(q, f.SiteID) + `
+		  AND (` + q.add(f.Arch) + ` = '' OR arch = ` + q.last() + `)
 		  AND (` + q.add(f.IncludeOrphaned) + ` OR orphaned_at IS NULL)
 		  AND (provider_id, external_id) > (` + q.add(f.AfterProvider) + `, ` + q.add(f.AfterExternalID) + `)
 		  AND ` + f.Visibility.clause(q) + `
@@ -467,6 +479,46 @@ func (s *Store) ListResources(ctx context.Context, f ResourceFilter) ([]Resource
 		}
 		res.Kind = ResourceKind(kind)
 		return res, json.Unmarshal(spec, &res.Spec)
+	})
+}
+
+// GetResource returns one cached resource, orphaned or not, if v admits it.
+// A resource the caller may not see is reported as ErrNotFound, so its
+// existence is not revealed.
+func (s *Store) GetResource(ctx context.Context, providerID string, kind ResourceKind, externalID string, v Visibility) (Resource, error) {
+	q := &queryArgs{}
+	sql := `
+		SELECT provider_id, kind, external_id, name, external_scope, coalesce(project_id, ''), arch, status,
+		       spec, observed_at, first_seen_at, orphaned_at
+		FROM resources r
+		WHERE provider_id = ` + q.add(providerID) + ` AND kind = ` + q.add(string(kind)) + ` AND external_id = ` + q.add(externalID) + `
+		  AND ` + v.clause(q)
+	var res Resource
+	var k string
+	var spec []byte
+	err := s.pool.QueryRow(ctx, sql, q.args...).Scan(&res.ProviderID, &k, &res.ExternalID, &res.Name, &res.ExternalScope,
+		&res.ProjectID, &res.Arch, &res.Status, &spec, &res.ObservedAt, &res.FirstSeenAt, &res.OrphanedAt)
+	if err != nil {
+		return Resource{}, mapErr(err)
+	}
+	res.Kind = ResourceKind(k)
+	return res, json.Unmarshal(spec, &res.Spec)
+}
+
+// RecentResourceChanges returns up to limit of a resource's latest history
+// entries, newest first.
+func (s *Store) RecentResourceChanges(ctx context.Context, providerID string, kind ResourceKind, externalID string, limit int) ([]ResourceChange, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, change, observed_at, coalesce(project_id, '') FROM resource_changes
+		WHERE provider_id = $1 AND kind = $2 AND external_id = $3 ORDER BY id DESC LIMIT $4`,
+		providerID, string(kind), externalID, limit)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (ResourceChange, error) {
+		var c ResourceChange
+		err := r.Scan(&c.ID, &c.Change, &c.ObservedAt, &c.ProjectID)
+		return c, err
 	})
 }
 

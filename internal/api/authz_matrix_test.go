@@ -36,6 +36,9 @@ var matrixRequests = []struct {
 	{"GetProvider", matrixRequest{"GET", "/api/v1/providers/pve-lab", ""}},
 	{"ListResources", matrixRequest{"GET", "/api/v1/resources?kind=vm", ""}},
 	{"GetCapacity", matrixRequest{"GET", "/api/v1/capacity", ""}},
+	// Callers outside p1's scope get 404, which still counts as access to
+	// the operation; visibility itself is checked in the inventory tests.
+	{"GetResource", matrixRequest{"GET", "/api/v1/resources/pve-lab/vm/p1", ""}},
 	{"GetProviderSyncStatus", matrixRequest{"GET", "/api/v1/providers/pve-lab/sync-status", ""}},
 	{"ListCredentials", matrixRequest{"GET", "/api/v1/providers/pve-lab/credentials", ""}},
 	{"CreateSite", matrixRequest{"POST", "/api/v1/sites", `{"id":"site-m","name":"Matrix"}`}},

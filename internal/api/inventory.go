@@ -18,6 +18,8 @@ type InventoryReader interface {
 	ListResources(ctx context.Context, f store.ResourceFilter) ([]store.Resource, error)
 	GetSyncStatus(ctx context.Context, providerID string) (store.SyncStatus, error)
 	CapacitySummary(ctx context.Context, f store.CapacityFilter) (store.Capacity, error)
+	GetResource(ctx context.Context, providerID string, kind store.ResourceKind, externalID string, v store.Visibility) (store.Resource, error)
+	RecentResourceChanges(ctx context.Context, providerID string, kind store.ResourceKind, externalID string, limit int) ([]store.ResourceChange, error)
 }
 
 var _ InventoryReader = (*store.Store)(nil)
@@ -111,6 +113,16 @@ func (s *server) listResources(ctx context.Context, params gen.ListResourcesPara
 	if params.ProjectId != nil {
 		f.ProjectIDs = []string{*params.ProjectId}
 	}
+	if params.SiteId != nil {
+		f.SiteID = *params.SiteId
+	}
+	if params.Arch != nil {
+		// The generated server does not enforce enums.
+		if !params.Arch.Valid() {
+			return gen.ResourceList{}, badRequest("unknown arch %q", *params.Arch)
+		}
+		f.Arch = string(*params.Arch)
+	}
 	if params.IncludeOrphaned != nil {
 		f.IncludeOrphaned = *params.IncludeOrphaned
 	}
@@ -134,6 +146,46 @@ func (s *server) listResources(ctx context.Context, params gen.ListResourcesPara
 			break
 		}
 		out.Items = append(out.Items, toResource(r))
+	}
+	return out, nil
+}
+
+// maxResourceChanges bounds the history returned with a resource.
+const maxResourceChanges = 50
+
+func (s *server) GetResource(ctx context.Context, req gen.GetResourceRequestObject) (gen.GetResourceResponseObject, error) {
+	instance := "/api/v1/resources/" + req.ProviderId + "/" + string(req.Kind) + "/" + req.ExternalId
+	d, err := s.getResource(ctx, req)
+	if err != nil {
+		code, p := s.problemFor(ctx, instance, err)
+		return gen.GetResourcedefaultApplicationProblemPlusJSONResponse{StatusCode: code, Body: p}, nil
+	}
+	return gen.GetResource200JSONResponse(d), nil
+}
+
+func (s *server) getResource(ctx context.Context, req gen.GetResourceRequestObject) (gen.ResourceDetail, error) {
+	if s.opts.Inventory == nil {
+		return gen.ResourceDetail{}, &apiError{status: http.StatusServiceUnavailable, detail: "inventory not configured"}
+	}
+	kind := store.ResourceKind(req.Kind)
+	if !kind.Valid() {
+		return gen.ResourceDetail{}, badRequest("unknown resource kind %q", req.Kind)
+	}
+	r, err := s.opts.Inventory.GetResource(ctx, req.ProviderId, kind, req.ExternalId, visibilityFor(auth.PrincipalFrom(ctx), kind))
+	if err != nil {
+		return gen.ResourceDetail{}, err
+	}
+	cs, err := s.opts.Inventory.RecentResourceChanges(ctx, r.ProviderID, r.Kind, r.ExternalID, maxResourceChanges)
+	if err != nil {
+		return gen.ResourceDetail{}, err
+	}
+	out := gen.ResourceDetail{Resource: toResource(r), Changes: make([]gen.ResourceChange, len(cs))}
+	for i, c := range cs {
+		out.Changes[i] = gen.ResourceChange{Id: c.ID, Change: gen.ResourceChangeChange(c.Change), ObservedAt: c.ObservedAt}
+		if c.ProjectID != "" {
+			project := c.ProjectID
+			out.Changes[i].ProjectId = &project
+		}
 	}
 	return out, nil
 }
@@ -162,6 +214,9 @@ func (s *server) capacity(ctx context.Context, params gen.GetCapacityParams) (ge
 	}
 	if params.ProjectId != nil {
 		f.ProjectIDs = []string{*params.ProjectId}
+	}
+	if params.SiteId != nil {
+		f.SiteID = *params.SiteId
 	}
 	c, err := s.opts.Inventory.CapacitySummary(ctx, f)
 	if err != nil {

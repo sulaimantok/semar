@@ -1,4 +1,5 @@
 // Pages
+export { VmDetailPage } from "./pages/vm-detail";
 export { VmListPage } from "./pages/vm-list";
 
 // Components
@@ -8,4 +9,4 @@ export { CapacityOverview } from "./components/capacity-overview";
 export { computeKeys } from "./hooks/compute-keys";
 
 // Types
-export type { ICapacity, IProvider, IResource } from "./services/compute-service";
+export type { ICapacity, IProvider, IResource, IResourceDetail } from "./services/compute-service";

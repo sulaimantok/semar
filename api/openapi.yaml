@@ -357,6 +357,16 @@ paths:
           in: query
           schema:
             $ref: "#/components/schemas/EntityId"
+        - name: siteId
+          in: query
+          description: Only resources of providers in this site.
+          schema:
+            $ref: "#/components/schemas/EntityId"
+        - name: arch
+          in: query
+          schema:
+            type: string
+            enum: [amd64, arm64, unknown]
         - name: includeOrphaned
           in: query
           schema:
@@ -383,6 +393,37 @@ paths:
                 $ref: "#/components/schemas/ResourceList"
         default:
           $ref: "#/components/responses/Problem"
+  /api/v1/resources/{providerId}/{kind}/{externalId}:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+      - name: kind
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ResourceKind"
+      - name: externalId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 255
+    get:
+      tags: [inventory]
+      summary: One cached resource with its recent change history
+      description: |
+        Includes orphaned resources. Subject to the same visibility rules as
+        GET /api/v1/resources; a resource the caller may not see answers 404.
+      operationId: getResource
+      responses:
+        "200":
+          description: Resource and its latest changes (newest first, at most 50)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceDetail"
+        default:
+          $ref: "#/components/responses/Problem"
   /api/v1/capacity:
     get:
       tags: [inventory]
@@ -396,6 +437,10 @@ paths:
       operationId: getCapacity
       parameters:
         - name: providerId
+          in: query
+          schema:
+            $ref: "#/components/schemas/EntityId"
+        - name: siteId
           in: query
           schema:
             $ref: "#/components/schemas/EntityId"
@@ -489,6 +534,31 @@ components:
         orphanedAt:
           type: string
           format: date-time
+    ResourceChange:
+      type: object
+      required: [id, change, observedAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        change:
+          type: string
+          enum: [created, updated, orphaned, restored]
+        observedAt:
+          type: string
+          format: date-time
+        projectId:
+          $ref: "#/components/schemas/EntityId"
+    ResourceDetail:
+      type: object
+      required: [resource, changes]
+      properties:
+        resource:
+          $ref: "#/components/schemas/Resource"
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResourceChange"
     ResourceList:
       type: object
       required: [items]

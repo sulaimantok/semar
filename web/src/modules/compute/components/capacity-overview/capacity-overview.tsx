@@ -1,3 +1,4 @@
+import { useGlobalFilter } from "@/modules/global-filter";
 import { formatMemoryMiB } from "@/shared/utils/format";
 
 import { useCapacity } from "../../hooks/use-capacity";
@@ -43,7 +44,8 @@ function Meter({ label, used, total, format }: { label: string; used: number; to
  * sees their projects; physical capacity is shown to global roles only.
  */
 export function CapacityOverview() {
-  const { data, isPending, isError } = useCapacity();
+  const { siteId, projectId, isActive } = useGlobalFilter();
+  const { data, isPending, isError } = useCapacity({ siteId, projectId });
 
   return (
     <section className={styles.section} aria-labelledby="capacity-title">
@@ -51,7 +53,9 @@ export function CapacityOverview() {
         <h2 id="capacity-title" className={styles.title}>
           Capacity
         </h2>
-        <p className={styles.subtitle}>Across the providers and projects you can see.</p>
+        <p className={styles.subtitle}>
+          {isActive ? "Within the global filter." : "Across the providers and projects you can see."}
+        </p>
       </header>
 
       {isError && (

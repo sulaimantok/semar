@@ -12,5 +12,6 @@ export const appShellStyles = {
     "flex items-center gap-3 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-surface hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
   navLinkActive: "bg-surface font-medium text-text",
   navIcon: "size-4 shrink-0",
+  content: "flex min-w-0 flex-col",
   main: "min-w-0 px-4 py-6 md:px-8 md:py-8",
 } as const;

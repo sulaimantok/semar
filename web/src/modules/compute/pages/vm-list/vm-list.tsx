@@ -1,11 +1,15 @@
+import { X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 
+import { useGlobalFilter, useProjectOptions, useSiteOptions } from "@/modules/global-filter";
 import { cn } from "@/shared/utils/cn";
 import { formatAge, formatMemoryMiB } from "@/shared/utils/format";
 
 import { useProviders } from "../../hooks/use-providers";
 import { useVmPages } from "../../hooks/use-vm-pages";
-import type { IResource } from "../../services/compute-service";
+import type { IArch, IResource } from "../../services/compute-service";
+import { vmPath } from "../../utils/vm-path";
 
 import { vmListStyles as styles } from "./vm-list.styles";
 
@@ -25,16 +29,48 @@ function ips(v: unknown): string {
   return Array.isArray(v) ? v.filter((x) => typeof x === "string").join(", ") : "";
 }
 
+const ARCHES: readonly IArch[] = ["amd64", "arm64", "unknown"];
+
 export function VmListPage() {
   const [providerId, setProviderId] = useState<string>("");
+  const [arch, setArch] = useState<IArch | "">("");
+  const global = useGlobalFilter();
   const providers = useProviders();
-  const vms = useVmPages(providerId || undefined);
+  const sites = useSiteOptions();
+  const projects = useProjectOptions();
+  const vms = useVmPages({
+    providerId: providerId || undefined,
+    arch: arch || undefined,
+    siteId: global.siteId,
+    projectId: global.projectId,
+  });
 
-  const providerName = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const p of providers.data ?? []) m.set(p.id, p.name);
-    return m;
-  }, [providers.data]);
+  const lookups = useMemo(() => {
+    const provider = new Map((providers.data ?? []).map((p) => [p.id, p]));
+    const site = new Map((sites.data ?? []).map((s) => [s.id, s.name]));
+    const project = new Map((projects.data ?? []).map((p) => [p.id, p.name]));
+    return { provider, site, project };
+  }, [providers.data, sites.data, projects.data]);
+
+  const chips: { key: string; label: string; clear: () => void }[] = [];
+  if (global.siteId) {
+    chips.push({ key: "site", label: `Site: ${lookups.site.get(global.siteId) ?? global.siteId}`, clear: () => global.set({ siteId: undefined }) });
+  }
+  if (global.projectId) {
+    chips.push({
+      key: "project",
+      label: `Project: ${lookups.project.get(global.projectId) ?? global.projectId}`,
+      clear: () => global.set({ projectId: undefined }),
+    });
+  }
+  if (providerId) {
+    chips.push({
+      key: "provider",
+      label: `Provider: ${lookups.provider.get(providerId)?.name ?? providerId}`,
+      clear: () => setProviderId(""),
+    });
+  }
+  if (arch) chips.push({ key: "arch", label: `Arch: ${arch}`, clear: () => setArch("") });
 
   const rows: IResource[] = vms.data?.pages.flatMap((p) => p.items) ?? [];
 
@@ -62,8 +98,32 @@ export function VmListPage() {
               </option>
             ))}
           </select>
+          <label className={styles.filterLabel} htmlFor="vm-arch">
+            Arch
+          </label>
+          <select id="vm-arch" className={styles.select} value={arch} onChange={(e) => setArch(e.target.value as IArch | "")}>
+            <option value="">All</option>
+            {ARCHES.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
         </div>
       </header>
+
+      {chips.length > 0 && (
+        <ul className={styles.chips} aria-label="Active filters">
+          {chips.map((c) => (
+            <li key={c.key}>
+              <button type="button" className={styles.chip} onClick={c.clear} aria-label={`Remove filter ${c.label}`}>
+                {c.label}
+                <X className={styles.chipIcon} aria-hidden="true" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {vms.isError && (
         <p className={styles.error} role="alert">
@@ -75,7 +135,9 @@ export function VmListPage() {
         <p className={styles.muted}>Loading…</p>
       ) : rows.length === 0 ? (
         <p className={styles.empty}>
-          No virtual machines yet. They appear after a provider is registered and its first sync completes.
+          {chips.length > 0
+            ? "No virtual machines match the active filters."
+            : "No virtual machines yet. They appear after a provider is registered and its first sync completes."}
         </p>
       ) : (
         <div className={styles.tableWrap}>
@@ -85,6 +147,7 @@ export function VmListPage() {
                 <th className={styles.th}>Name</th>
                 <th className={styles.th}>Status</th>
                 <th className={styles.th}>Provider</th>
+                <th className={styles.th}>Site</th>
                 <th className={styles.th}>Project</th>
                 <th className={styles.th}>Arch</th>
                 <th className={styles.th}>vCPU</th>
@@ -97,18 +160,30 @@ export function VmListPage() {
               {rows.map((vm) => {
                 const vcpus = num(vm.spec.vcpus);
                 const mem = num(vm.spec.memoryMiB);
+                const provider = lookups.provider.get(vm.providerId);
+                const siteId = provider?.siteId;
                 return (
                   <tr key={`${vm.providerId}/${vm.externalId}`}>
-                    <td className={cn(styles.td, styles.name)}>{vm.name || vm.externalId}</td>
+                    <td className={cn(styles.td, styles.name)}>
+                      <Link className={styles.link} to={vmPath(vm)}>
+                        {vm.name || vm.externalId}
+                      </Link>
+                      {vm.orphanedAt && <span className={styles.orphanBadge}>orphaned</span>}
+                    </td>
                     <td className={styles.td}>
                       <span className={styles.status}>
                         <span className={cn(styles.dot, statusDot[vm.status] ?? styles.dotStopped)} aria-hidden="true" />
                         {vm.status || "unknown"}
                       </span>
                     </td>
-                    <td className={styles.td}>{providerName.get(vm.providerId) ?? vm.providerId}</td>
+                    <td className={styles.td}>{provider?.name ?? vm.providerId}</td>
+                    <td className={styles.td}>{siteId ? (lookups.site.get(siteId) ?? siteId) : "—"}</td>
                     <td className={styles.td}>
-                      {vm.projectId ?? <span className={styles.badge}>unassigned</span>}
+                      {vm.projectId ? (
+                        (lookups.project.get(vm.projectId) ?? vm.projectId)
+                      ) : (
+                        <span className={styles.badge}>unassigned</span>
+                      )}
                     </td>
                     <td className={cn(styles.td, styles.mono)}>{vm.arch}</td>
                     <td className={styles.td}>{vcpus ?? "—"}</td>

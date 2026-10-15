@@ -1,7 +1,8 @@
 import { createBrowserRouter, Navigate } from "react-router";
 
 import { LoginPage, RequireAuth, UserMenu } from "@/modules/auth";
-import { VmListPage } from "@/modules/compute";
+import { VmDetailPage, VmListPage } from "@/modules/compute";
+import { GlobalFilterBar } from "@/modules/global-filter";
 import { ProjectsPage, ProviderDetailPage, ProvidersPage, SettingsLayout, SitesPage } from "@/modules/settings";
 import { NotFoundPage, OverviewPage } from "@/modules/system";
 import { AppShell } from "@/shared/components/app-shell";
@@ -13,12 +14,13 @@ export const router = createBrowserRouter([
     path: "/",
     element: (
       <RequireAuth>
-        <AppShell footer={<UserMenu />} />
+        <AppShell header={<GlobalFilterBar />} footer={<UserMenu />} />
       </RequireAuth>
     ),
     children: [
       { index: true, element: <OverviewPage /> },
       { path: "compute", element: <VmListPage /> },
+      { path: "compute/vms/:providerId/:externalId", element: <VmDetailPage /> },
       {
         path: "settings",
         element: <SettingsLayout />,
