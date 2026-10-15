@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { computeKeys } from "@/modules/compute";
+import { globalFilterKeys } from "@/modules/global-filter";
 
 import {
   createMapping,
@@ -24,7 +25,10 @@ export function useCreateSite() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: ISiteCreate) => createSite(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: settingsKeys.sites() }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: settingsKeys.sites() });
+      await qc.invalidateQueries({ queryKey: globalFilterKeys.sites() });
+    },
   });
 }
 
@@ -32,7 +36,10 @@ export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: IProjectCreate) => createProject(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: settingsKeys.projects() }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: settingsKeys.projects() });
+      await qc.invalidateQueries({ queryKey: globalFilterKeys.projects() });
+    },
   });
 }
 

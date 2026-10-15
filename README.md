@@ -9,14 +9,14 @@
 | Phase | Scope | State |
 |---|---|---|
 | 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment and spikes S1–S3 |
-| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test; web sign-in, Overview with capacity, Compute (VM list) and Settings (providers, sites, projects and mappings, write-only credentials). Next: global Site/Project filter and VM detail, provider update and connection check, OpenStack/Proxmox drivers, console proxy |
+| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test; web sign-in, global Site/Project filter, Overview with capacity, Compute (VM list with filter chips, VM detail with history) and Settings (providers, sites, projects and mappings, write-only credentials). Next: provider update and connection check, operability (metrics, runbooks), OpenStack/Proxmox drivers, console proxy |
 | 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
 
 ## What's Here
 
 | Component | Location | Notes |
 |---|---|---|
-| API server | `cmd/semar-api`, `internal/api` | Health/readiness/version, Settings, auth and credential endpoints; RFC 9457 errors; `X-Request-ID`; CSRF protection; 1 MiB body limit |
+| API server | `cmd/semar-api`, `internal/api` | Health/readiness/version, Settings, auth, credential and inventory endpoints; RFC 9457 errors; `X-Request-ID`; CSRF protection; 1 MiB body limit |
 | Auth | `internal/auth`, `internal/api/auth.go` | Local users (argon2id), server-side sessions, role bindings, per-operation access policies (fail closed) |
 | Generated API layer | `internal/api/gen` | Strict `net/http` server generated from the spec (`go generate ./...`) |
 | Worker | `cmd/semar-worker`, `internal/workflow` | Temporal worker: per-provider sync Schedules reconciled with the registered providers, inventory persisted to PostgreSQL, AES-256-GCM payload codec with key rotation |
@@ -24,7 +24,7 @@
 | Driver contract | `internal/driver/contract` | Provider-neutral model + read-only `CloudDriver` interface |
 | Contract test suite | `internal/driver/contracttest` | Run by every driver (the Fake Driver on each PR; the OpenStack and Proxmox drivers will also run it against a lab) |
 | Fake Driver | `internal/driver/fake` | Deterministic inventory + fault injection (latency, error rate, fail-next) |
-| Web UI | `web/` | React + Vite + TypeScript + Tailwind; sign-in, Overview (API status, capacity), Compute (VM list), Settings (providers, sites, projects, mappings, credentials); module-based layout, API types generated from the spec (see `web/README.md`) |
+| Web UI | `web/` | React + Vite + TypeScript + Tailwind; sign-in, global Site/Project filter, Overview (API status, capacity), Compute (VM list and detail), Settings (providers, sites, projects, mappings, credentials); module-based layout, API types generated from the spec (see `web/README.md`) |
 | Store | `internal/store`, `internal/model`, `internal/secret` | PostgreSQL (pgx) with embedded goose migrations: sites, projects, providers, project mappings, users, sessions, role bindings, append-only hash-chained audit log, inventory cache with change history and sync status; credentials sealed with envelope encryption (ADR-0004) |
 | Lite profile | `deploy/compose/` | PostgreSQL + Temporal + UI + SEMAR (development only) |
 | ADRs & spikes | `docs/adr/`, `docs/spikes/` | ADR-0001 … ADR-0007, spike S4 |
@@ -74,7 +74,7 @@ The Lite profile does not serve the web UI yet. Run it from `web/` with `npm ci 
 
 ### Trying it out
 
-With the stack running, sign in to the web UI as `admin` and open **Settings → Providers** to register a provider of type **Fake** (any endpoint URL, e.g. `https://fake.example.com`). Within one sync interval the worker creates its schedule and the first sync fills **Compute** and the capacity cards on **Overview**. Add a project under **Settings → Projects** and map it to the fake scope `proj-a` to see ownership applied on the next sync.
+With the stack running, sign in to the web UI as `admin` and open **Settings → Providers** to register a provider of type **Fake** (any endpoint URL, e.g. `https://fake.example.com`). Within one sync interval the worker creates its schedule and the first sync fills **Compute** and the capacity cards on **Overview**; open a VM for its detail and history. Add a project under **Settings → Projects** and map it to the fake scope `proj-a` to see ownership applied on the next sync, then pick the project in the global filter at the top of the page to narrow every view to it.
 
 ### API overview
 
@@ -88,8 +88,9 @@ The full contract is [`api/openapi.yaml`](api/openapi.yaml).
 | `GET /api/v1/sites`, `/projects`, `/projects/{id}/mappings`, `/providers`, `/providers/{id}` | signed in |
 | `POST` sites, projects, mappings, providers; `DELETE /providers/{id}` | admin |
 | `GET/PUT/DELETE /api/v1/providers/{id}/credentials` | admin (secrets are write-only) |
-| `GET /api/v1/resources?kind=vm\|hypervisor\|image\|network\|volume` | signed in; scoped to the caller's role bindings (see below) |
-| `GET /api/v1/capacity` | signed in; same scoping as `/resources`; physical capacity for global bindings only |
+| `GET /api/v1/resources?kind=vm\|hypervisor\|image\|network\|volume` (optional `providerId`, `siteId`, `projectId`, `arch`) | signed in; scoped to the caller's role bindings (see below) |
+| `GET /api/v1/resources/{providerId}/{kind}/{externalId}` | signed in; same scoping, 404 outside it; includes orphaned resources and the latest 50 changes |
+| `GET /api/v1/capacity` (optional `providerId`, `siteId`, `projectId`) | signed in; same scoping as `/resources`; physical capacity for global bindings only |
 | `GET /api/v1/providers/{id}/sync-status` | signed in; providers in the caller's scope; `lastError` for global admins and operators only |
 
 ### Authentication and audit

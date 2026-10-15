@@ -71,6 +71,7 @@ var operationAccess = map[string]access{
 	"ListResources":         accessAuthenticated,
 	"GetProviderSyncStatus": accessAuthenticated,
 	"GetCapacity":           accessAuthenticated,
+	"GetResource":           accessAuthenticated,
 }
 
 // authorize is a strict-server middleware enforcing operationAccess.

@@ -9,9 +9,11 @@ import { visibleNavItems } from "./nav-items";
 export interface IAppShellProps {
   /** Rendered at the bottom of the sidebar (e.g. the signed-in user menu). */
   footer?: ReactNode;
+  /** Rendered above the page content (e.g. the global filter). */
+  header?: ReactNode;
 }
 
-export function AppShell({ footer }: IAppShellProps) {
+export function AppShell({ footer, header }: IAppShellProps) {
   return (
     <div className={styles.root}>
       <aside className={styles.sidebar}>
@@ -39,9 +41,12 @@ export function AppShell({ footer }: IAppShellProps) {
         </nav>
         {footer && <div className={styles.footer}>{footer}</div>}
       </aside>
-      <main className={styles.main}>
-        <Outlet />
-      </main>
+      <div className={styles.content}>
+        {header}
+        <main className={styles.main}>
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }

@@ -212,3 +212,77 @@ func TestCapacityTotals(t *testing.T) {
 		t.Fatalf("capacity after orphaning = %+v", c.Vms)
 	}
 }
+
+func TestResourcesSiteAndArchFilters(t *testing.T) {
+	a := newInventoryAPI(t)
+	a.expect(a.call("POST", "/api/v1/sites", `{"id":"site-b","name":"Site B"}`), http.StatusCreated, nil)
+	a.expect(a.call("POST", "/api/v1/providers", `{"id":"edge","type":"fake","name":"Edge","siteId":"site-b","endpoints":["https://edge.example.com"]}`), http.StatusCreated, nil)
+	snap := store.Snapshot{ProviderID: "edge", ObservedAt: syncedAt, Resources: []store.ObservedResource{
+		{Kind: store.KindVM, ExternalID: "e1", Name: "e1", Arch: "amd64", Status: "running", Spec: map[string]any{"vcpus": 1}},
+		{Kind: store.KindHypervisor, ExternalID: "ehv", Name: "edge-hv", Arch: "amd64", Status: "up", Spec: map[string]any{"vcpus": 16}},
+	}}
+	if _, err := a.st.ApplySnapshot(t.Context(), snap, 3); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Join(a.resourceIDs(t, "kind=vm&siteId=site-b"), " "); got != "e1" {
+		t.Fatalf("site filter = %q", got)
+	}
+	if got := strings.Join(a.resourceIDs(t, "kind=vm&arch=amd64"), " "); got != "e1" {
+		t.Fatalf("arch filter = %q", got)
+	}
+	if got := strings.Join(a.resourceIDs(t, "kind=vm&siteId=unknown-site"), " "); got != "" {
+		t.Fatalf("unknown site = %q", got)
+	}
+	a.expect(a.call("GET", "/api/v1/resources?kind=vm&arch=sparc", ""), http.StatusBadRequest, nil)
+
+	var c gen.Capacity
+	a.expect(a.call("GET", "/api/v1/capacity?siteId=site-b", ""), http.StatusOK, &c)
+	if c.Vms.Total != 1 || c.Hypervisors == nil || c.Hypervisors.Total != 1 || c.Hypervisors.Vcpus != 16 {
+		t.Fatalf("site capacity = %+v / %+v", c.Vms, c.Hypervisors)
+	}
+}
+
+func TestGetResourceWithHistoryAndVisibility(t *testing.T) {
+	a := newInventoryAPI(t)
+	// A second sync renames p1, and a third drops u1 until it is orphaned.
+	next := store.Snapshot{ProviderID: "pve-lab", ObservedAt: syncedAt.Add(time.Minute), Resources: []store.ObservedResource{
+		{Kind: store.KindVM, ExternalID: "p1", Name: "p1-renamed", ExternalScope: "pool:payment", Arch: "arm64", Status: "running"},
+		{Kind: store.KindVM, ExternalID: "s1", Name: "s1", ExternalScope: "pool:search", Arch: "arm64", Status: "running",
+			Spec: map[string]any{"vcpus": 2, "ipAddresses": []string{"10.0.0.1"}}},
+	}}
+	if _, err := a.st.ApplySnapshot(t.Context(), next, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	var d gen.ResourceDetail
+	a.expect(a.call("GET", "/api/v1/resources/pve-lab/vm/p1", ""), http.StatusOK, &d)
+	if d.Resource.Name != "p1-renamed" || d.Resource.ProjectId == nil || *d.Resource.ProjectId != "payment" {
+		t.Fatalf("resource = %+v", d.Resource)
+	}
+	if len(d.Changes) != 2 || d.Changes[0].Change != gen.Updated || d.Changes[1].Change != gen.Created ||
+		d.Changes[0].ProjectId == nil || *d.Changes[0].ProjectId != "payment" {
+		t.Fatalf("changes = %+v, want updated then created", d.Changes)
+	}
+
+	// Orphaned resources stay reachable for admins and operators.
+	a.expect(a.call("GET", "/api/v1/resources/pve-lab/vm/u1", ""), http.StatusOK, &d)
+	if d.Resource.OrphanedAt == nil || d.Changes[0].Change != gen.Orphaned {
+		t.Fatalf("orphaned resource = %+v, changes %+v", d.Resource, d.Changes)
+	}
+	a.expect(a.call("GET", "/api/v1/resources/pve-lab/vm/ghost", ""), http.StatusNotFound, nil)
+	a.expect(a.call("GET", "/api/v1/resources/pve-lab/router/p1", ""), http.StatusBadRequest, nil)
+
+	// A project viewer sees their project's VM; others are indistinguishable
+	// from missing ones.
+	a.loginAs(t, "payviewer", auth.RoleBinding{Role: auth.RoleViewer, ProjectID: "payment"})
+	a.expect(a.call("GET", "/api/v1/resources/pve-lab/vm/p1", ""), http.StatusOK, nil)
+	var p404 gen.Problem
+	a.expect(a.call("GET", "/api/v1/resources/pve-lab/vm/s1", ""), http.StatusNotFound, &p404)
+	a.expect(a.call("GET", "/api/v1/resources/pve-lab/hypervisor/hv1", ""), http.StatusNotFound, nil)
+	var ghost gen.Problem
+	a.expect(a.call("GET", "/api/v1/resources/pve-lab/vm/ghost", ""), http.StatusNotFound, &ghost)
+	if *p404.Detail != *ghost.Detail {
+		t.Fatalf("hidden and missing resources differ: %q vs %q", *p404.Detail, *ghost.Detail)
+	}
+}

@@ -260,6 +260,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{providerId}/{kind}/{externalId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+                kind: components["schemas"]["ResourceKind"];
+                externalId: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * One cached resource with its recent change history
+         * @description Includes orphaned resources. Subject to the same visibility rules as
+         *     GET /api/v1/resources; a resource the caller may not see answers 404.
+         */
+        get: operations["getResource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/capacity": {
         parameters: {
             query?: never;
@@ -333,6 +358,19 @@ export interface components {
             firstSeenAt: string;
             /** Format: date-time */
             orphanedAt?: string;
+        };
+        ResourceChange: {
+            /** Format: int64 */
+            id: number;
+            /** @enum {string} */
+            change: "created" | "updated" | "orphaned" | "restored";
+            /** Format: date-time */
+            observedAt: string;
+            projectId?: components["schemas"]["EntityId"];
+        };
+        ResourceDetail: {
+            resource: components["schemas"]["Resource"];
+            changes: components["schemas"]["ResourceChange"][];
         };
         ResourceList: {
             items: components["schemas"]["Resource"][];
@@ -1015,6 +1053,9 @@ export interface operations {
                 kind: components["schemas"]["ResourceKind"];
                 providerId?: components["schemas"]["EntityId"];
                 projectId?: components["schemas"]["EntityId"];
+                /** @description Only resources of providers in this site. */
+                siteId?: components["schemas"]["EntityId"];
+                arch?: "amd64" | "arm64" | "unknown";
                 includeOrphaned?: boolean;
                 limit?: number;
                 /** @description Opaque cursor from a previous page's `nextCursor`. */
@@ -1038,10 +1079,36 @@ export interface operations {
             default: components["responses"]["Problem"];
         };
     };
+    getResource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+                kind: components["schemas"]["ResourceKind"];
+                externalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resource and its latest changes (newest first, at most 50) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceDetail"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
     getCapacity: {
         parameters: {
             query?: {
                 providerId?: components["schemas"]["EntityId"];
+                siteId?: components["schemas"]["EntityId"];
                 projectId?: components["schemas"]["EntityId"];
             };
             header?: never;

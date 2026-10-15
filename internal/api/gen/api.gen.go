@@ -65,19 +65,43 @@ func (e ProviderType) Valid() bool {
 
 // Defines values for ResourceArch.
 const (
-	Amd64   ResourceArch = "amd64"
-	Arm64   ResourceArch = "arm64"
-	Unknown ResourceArch = "unknown"
+	ResourceArchAmd64   ResourceArch = "amd64"
+	ResourceArchArm64   ResourceArch = "arm64"
+	ResourceArchUnknown ResourceArch = "unknown"
 )
 
 // Valid indicates whether the value is a known member of the ResourceArch enum.
 func (e ResourceArch) Valid() bool {
 	switch e {
-	case Amd64:
+	case ResourceArchAmd64:
 		return true
-	case Arm64:
+	case ResourceArchArm64:
 		return true
-	case Unknown:
+	case ResourceArchUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResourceChangeChange.
+const (
+	Created  ResourceChangeChange = "created"
+	Orphaned ResourceChangeChange = "orphaned"
+	Restored ResourceChangeChange = "restored"
+	Updated  ResourceChangeChange = "updated"
+)
+
+// Valid indicates whether the value is a known member of the ResourceChangeChange enum.
+func (e ResourceChangeChange) Valid() bool {
+	switch e {
+	case Created:
+		return true
+	case Orphaned:
+		return true
+	case Restored:
+		return true
+	case Updated:
 		return true
 	default:
 		return false
@@ -147,6 +171,27 @@ func (e SyncStatusStatus) Valid() bool {
 	case Healthy:
 		return true
 	case Unreachable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListResourcesParamsArch.
+const (
+	ListResourcesParamsArchAmd64   ListResourcesParamsArch = "amd64"
+	ListResourcesParamsArchArm64   ListResourcesParamsArch = "arm64"
+	ListResourcesParamsArchUnknown ListResourcesParamsArch = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the ListResourcesParamsArch enum.
+func (e ListResourcesParamsArch) Valid() bool {
+	switch e {
+	case ListResourcesParamsArchAmd64:
+		return true
+	case ListResourcesParamsArchArm64:
+		return true
+	case ListResourcesParamsArchUnknown:
 		return true
 	default:
 		return false
@@ -362,6 +407,25 @@ type Resource struct {
 // ResourceArch defines model for Resource.Arch.
 type ResourceArch string
 
+// ResourceChange defines model for ResourceChange.
+type ResourceChange struct {
+	Change     ResourceChangeChange `json:"change"`
+	Id         int64                `json:"id"`
+	ObservedAt time.Time            `json:"observedAt"`
+
+	// ProjectId Examples: os-jkt
+	ProjectId *EntityId `json:"projectId,omitempty"`
+}
+
+// ResourceChangeChange defines model for ResourceChange.Change.
+type ResourceChangeChange string
+
+// ResourceDetail defines model for ResourceDetail.
+type ResourceDetail struct {
+	Changes  []ResourceChange `json:"changes"`
+	Resource Resource         `json:"resource"`
+}
+
 // ResourceKind defines model for ResourceKind.
 type ResourceKind string
 
@@ -462,6 +526,7 @@ type ProviderId = EntityId
 // GetCapacityParams defines parameters for GetCapacity.
 type GetCapacityParams struct {
 	ProviderId *EntityId `form:"providerId,omitempty" json:"providerId,omitempty"`
+	SiteId     *EntityId `form:"siteId,omitempty" json:"siteId,omitempty"`
 	ProjectId  *EntityId `form:"projectId,omitempty" json:"projectId,omitempty"`
 }
 
@@ -473,15 +538,22 @@ type DeleteCredentialParams struct {
 
 // ListResourcesParams defines parameters for ListResources.
 type ListResourcesParams struct {
-	Kind            ResourceKind `form:"kind" json:"kind"`
-	ProviderId      *EntityId    `form:"providerId,omitempty" json:"providerId,omitempty"`
-	ProjectId       *EntityId    `form:"projectId,omitempty" json:"projectId,omitempty"`
-	IncludeOrphaned *bool        `form:"includeOrphaned,omitempty" json:"includeOrphaned,omitempty"`
-	Limit           *int         `form:"limit,omitempty" json:"limit,omitempty"`
+	Kind       ResourceKind `form:"kind" json:"kind"`
+	ProviderId *EntityId    `form:"providerId,omitempty" json:"providerId,omitempty"`
+	ProjectId  *EntityId    `form:"projectId,omitempty" json:"projectId,omitempty"`
+
+	// SiteId Only resources of providers in this site.
+	SiteId          *EntityId                `form:"siteId,omitempty" json:"siteId,omitempty"`
+	Arch            *ListResourcesParamsArch `form:"arch,omitempty" json:"arch,omitempty"`
+	IncludeOrphaned *bool                    `form:"includeOrphaned,omitempty" json:"includeOrphaned,omitempty"`
+	Limit           *int                     `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Cursor Opaque cursor from a previous page's `nextCursor`.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
+
+// ListResourcesParamsArch defines parameters for ListResources.
+type ListResourcesParamsArch string
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
@@ -554,6 +626,9 @@ type ServerInterface interface {
 	// ListResources List cached inventory resources the caller may see
 	// (GET /api/v1/resources)
 	ListResources(w http.ResponseWriter, r *http.Request, params ListResourcesParams)
+	// GetResource One cached resource with its recent change history
+	// (GET /api/v1/resources/{providerId}/{kind}/{externalId})
+	GetResource(w http.ResponseWriter, r *http.Request, providerId ProviderId, kind ResourceKind, externalId string)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(w http.ResponseWriter, r *http.Request)
@@ -640,6 +715,19 @@ func (siw *ServerInterfaceWrapper) GetCapacity(w http.ResponseWriter, r *http.Re
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "providerId"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "providerId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "siteId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "siteId", r.URL.Query(), &params.SiteId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "siteId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "siteId", Err: err})
 		}
 		return
 	}
@@ -1009,6 +1097,32 @@ func (siw *ServerInterfaceWrapper) ListResources(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// ------------- Optional query parameter "siteId" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "siteId", r.URL.Query(), &params.SiteId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "siteId"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "siteId", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "arch" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "arch", r.URL.Query(), &params.Arch, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "arch"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "arch", Err: err})
+		}
+		return
+	}
+
 	// ------------- Optional query parameter "includeOrphaned" -------------
 
 	err = runtime.BindQueryParameterWithOptions("form", true, false, "includeOrphaned", r.URL.Query(), &params.IncludeOrphaned, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
@@ -1050,6 +1164,50 @@ func (siw *ServerInterfaceWrapper) ListResources(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListResources(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetResource operation middleware
+func (siw *ServerInterfaceWrapper) GetResource(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "providerId" -------------
+	var providerId ProviderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "providerId", r.PathValue("providerId"), &providerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "providerId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "kind" -------------
+	var kind ResourceKind
+
+	err = runtime.BindStyledParameterWithOptions("simple", "kind", r.PathValue("kind"), &kind, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "externalId" -------------
+	var externalId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "externalId", r.PathValue("externalId"), &externalId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "externalId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetResource(w, r, providerId, kind, externalId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1269,6 +1427,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.ListCredentials)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.PutCredential)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/resources", wrapper.ListResources)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/resources/{providerId}/{kind}/{externalId}", wrapper.GetResource)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/capacity", wrapper.GetCapacity)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers/{providerId}/sync-status", wrapper.GetProviderSyncStatus)
 
@@ -1939,6 +2098,47 @@ func (response ListResourcesdefaultApplicationProblemPlusJSONResponse) VisitList
 	return err
 }
 
+type GetResourceRequestObject struct {
+	ProviderId ProviderId   `json:"providerId"`
+	Kind       ResourceKind `json:"kind"`
+	ExternalId string       `json:"externalId"`
+}
+
+type GetResourceResponseObject interface {
+	VisitGetResourceResponse(w http.ResponseWriter) error
+}
+
+type GetResource200JSONResponse ResourceDetail
+
+func (response GetResource200JSONResponse) VisitGetResourceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetResourcedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetResourcedefaultApplicationProblemPlusJSONResponse) VisitGetResourceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListSitesRequestObject struct {
 }
 
@@ -2165,6 +2365,9 @@ type StrictServerInterface interface {
 	// ListResources List cached inventory resources the caller may see
 	// (GET /api/v1/resources)
 	ListResources(ctx context.Context, request ListResourcesRequestObject) (ListResourcesResponseObject, error)
+	// GetResource One cached resource with its recent change history
+	// (GET /api/v1/resources/{providerId}/{kind}/{externalId})
+	GetResource(ctx context.Context, request GetResourceRequestObject) (GetResourceResponseObject, error)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(ctx context.Context, request ListSitesRequestObject) (ListSitesResponseObject, error)
@@ -2678,6 +2881,34 @@ func (sh *strictHandler) ListResources(w http.ResponseWriter, r *http.Request, p
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListResourcesResponseObject); ok {
 		if err := validResponse.VisitListResourcesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetResource operation middleware
+func (sh *strictHandler) GetResource(w http.ResponseWriter, r *http.Request, providerId ProviderId, kind ResourceKind, externalId string) {
+	var request GetResourceRequestObject
+
+	request.ProviderId = providerId
+	request.Kind = kind
+	request.ExternalId = externalId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetResource(ctx, request.(GetResourceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetResource")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetResourceResponseObject); ok {
+		if err := validResponse.VisitGetResourceResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
