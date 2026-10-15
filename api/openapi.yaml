@@ -261,6 +261,31 @@ paths:
                 $ref: "#/components/schemas/Provider"
         default:
           $ref: "#/components/responses/Problem"
+    patch:
+      tags: [settings]
+      summary: Update a provider
+      description: |
+        Changes name, site, endpoints or region; ID and type are immutable,
+        so a renamed endpoint is an update, never a second registration
+        (roadmap §3.5). The fingerprint is re-derived; changing endpoints or
+        region clears the last connection check. Moving a provider to
+        another site moves its sync to that site's worker.
+      operationId: updateProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProviderUpdate"
+      responses:
+        "200":
+          description: The updated provider
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Provider"
+        default:
+          $ref: "#/components/responses/Problem"
     delete:
       tags: [settings]
       summary: Remove a provider (soft delete; history is kept)
@@ -268,6 +293,28 @@ paths:
       responses:
         "204":
           description: Removed
+        default:
+          $ref: "#/components/responses/Problem"
+  /api/v1/providers/{providerId}/validate:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+    post:
+      tags: [settings]
+      summary: Check the connection to a provider
+      description: |
+        Connects through the provider's driver and records the identity of
+        the cloud (cloudFingerprint) and its maximum API versions. Fails with
+        409 when another provider already holds that identity, 501 for
+        provider types without a driver yet, 502 when the provider refuses
+        the credentials or cannot be reached, and 504 on timeout.
+      operationId: validateProvider
+      responses:
+        "200":
+          description: Connection check succeeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Provider"
         default:
           $ref: "#/components/responses/Problem"
   /api/v1/providers/{providerId}/credentials:
@@ -882,6 +929,18 @@ components:
         fingerprint:
           type: string
           description: Stable identity of the backing cloud, derived by the server.
+        cloudFingerprint:
+          type: string
+          description: Identity reported by the driver on the last successful connection check.
+        validatedAt:
+          type: string
+          format: date-time
+          description: Time of the last successful connection check; absent until checked.
+        apiVersions:
+          type: object
+          additionalProperties:
+            type: string
+          description: Maximum API (micro)version per service, from the last connection check.
         createdAt:
           type: string
           format: date-time
@@ -911,6 +970,25 @@ components:
         regionName:
           type: string
           description: OpenStack region; empty for Proxmox.
+    ProviderUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+        siteId:
+          type: string
+          pattern: "^([a-z0-9][a-z0-9-]{0,62})?$"
+          description: Site ID; an empty string removes the provider from its site.
+        endpoints:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uri
+        regionName:
+          type: string
     ProviderList:
       type: object
       required: [items]

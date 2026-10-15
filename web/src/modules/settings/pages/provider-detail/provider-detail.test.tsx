@@ -112,4 +112,57 @@ describe("ProviderDetailPage", () => {
     expect(await screen.findByText("providers list")).toBeTruthy();
     expect(deleted).toHaveBeenCalledOnce();
   });
+
+  it("edits only the changed fields", async () => {
+    let sent: unknown;
+    render(admin, {
+      "PATCH /api/v1/providers/pve-lab": async (req) => {
+        sent = await req.json();
+        return json(200, { ...provider, name: "PVE Lab (prod)" });
+      },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "PVE Lab (prod)" } });
+    const save = screen.getByRole("button", { name: "Save changes" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText(/^Endpoints/), { target: { value: "https://pve2.example.com:8006" } });
+    expect(screen.getByText(/clears the last connection check/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/^Endpoints/), { target: { value: "https://pve1.example.com:8006\n" } });
+    fireEvent.click(save);
+
+    // The form closes on success; the page then refetches the provider.
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Save changes" })).toBeNull());
+    expect(sent).toEqual({ name: "PVE Lab (prod)" });
+  });
+
+  it("checks the connection and shows the recorded identity", async () => {
+    const validated = {
+      ...provider,
+      cloudFingerprint: "fake://seed-42",
+      validatedAt: new Date().toISOString(),
+      apiVersions: { compute: "fake-1.0" },
+    };
+    render(admin, { "POST /api/v1/providers/pve-lab/validate": () => json(200, validated) });
+
+    expect(await screen.findByText(/Not checked since/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Check connection" }));
+    expect(await screen.findByText("fake://seed-42")).toBeTruthy();
+    expect(screen.getByText("compute fake-1.0")).toBeTruthy();
+  });
+
+  it("shows why a connection check failed", async () => {
+    render(admin, {
+      "POST /api/v1/providers/pve-lab/validate": () => problem(502, "Bad Gateway", "the provider refused the credentials"),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Check connection" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/refused the credentials/);
+  });
+
+  it("hides editing and checks from non-admins", async () => {
+    render(operator);
+    expect(await screen.findByText(/Not checked since/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Check connection" })).toBeNull();
+  });
 });

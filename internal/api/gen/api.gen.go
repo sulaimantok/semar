@@ -336,8 +336,13 @@ type ProjectMappingList struct {
 
 // Provider defines model for Provider.
 type Provider struct {
-	CreatedAt time.Time `json:"createdAt"`
-	Endpoints []string  `json:"endpoints"`
+	// ApiVersions Maximum API (micro)version per service, from the last connection check.
+	ApiVersions *map[string]string `json:"apiVersions,omitempty"`
+
+	// CloudFingerprint Identity reported by the driver on the last successful connection check.
+	CloudFingerprint *string   `json:"cloudFingerprint,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
+	Endpoints        []string  `json:"endpoints"`
 
 	// Fingerprint Stable identity of the backing cloud, derived by the server.
 	Fingerprint string `json:"fingerprint"`
@@ -351,6 +356,9 @@ type Provider struct {
 	SiteId    *EntityId    `json:"siteId,omitempty"`
 	Type      ProviderType `json:"type"`
 	UpdatedAt time.Time    `json:"updatedAt"`
+
+	// ValidatedAt Time of the last successful connection check; absent until checked.
+	ValidatedAt *time.Time `json:"validatedAt,omitempty"`
 }
 
 // ProviderCreate defines model for ProviderCreate.
@@ -377,6 +385,16 @@ type ProviderList struct {
 
 // ProviderType defines model for ProviderType.
 type ProviderType string
+
+// ProviderUpdate defines model for ProviderUpdate.
+type ProviderUpdate struct {
+	Endpoints  *[]string `json:"endpoints,omitempty"`
+	Name       *string   `json:"name,omitempty"`
+	RegionName *string   `json:"regionName,omitempty"`
+
+	// SiteId Site ID; an empty string removes the provider from its site.
+	SiteId *string `json:"siteId,omitempty"`
+}
 
 // Resource defines model for Resource.
 type Resource struct {
@@ -567,6 +585,9 @@ type CreateProjectMappingJSONRequestBody = ProjectMappingCreate
 // CreateProviderJSONRequestBody defines body for CreateProvider for application/json ContentType.
 type CreateProviderJSONRequestBody = ProviderCreate
 
+// UpdateProviderJSONRequestBody defines body for UpdateProvider for application/json ContentType.
+type UpdateProviderJSONRequestBody = ProviderUpdate
+
 // PutCredentialJSONRequestBody defines body for PutCredential for application/json ContentType.
 type PutCredentialJSONRequestBody = CredentialPut
 
@@ -611,6 +632,9 @@ type ServerInterface interface {
 	// GetProvider Get a provider
 	// (GET /api/v1/providers/{providerId})
 	GetProvider(w http.ResponseWriter, r *http.Request, providerId ProviderId)
+	// UpdateProvider Update a provider
+	// (PATCH /api/v1/providers/{providerId})
+	UpdateProvider(w http.ResponseWriter, r *http.Request, providerId ProviderId)
 	// DeleteCredential Delete a credential
 	// (DELETE /api/v1/providers/{providerId}/credentials)
 	DeleteCredential(w http.ResponseWriter, r *http.Request, providerId ProviderId, params DeleteCredentialParams)
@@ -623,6 +647,9 @@ type ServerInterface interface {
 	// GetProviderSyncStatus Last inventory sync outcome of a provider
 	// (GET /api/v1/providers/{providerId}/sync-status)
 	GetProviderSyncStatus(w http.ResponseWriter, r *http.Request, providerId ProviderId)
+	// ValidateProvider Check the connection to a provider
+	// (POST /api/v1/providers/{providerId}/validate)
+	ValidateProvider(w http.ResponseWriter, r *http.Request, providerId ProviderId)
 	// ListResources List cached inventory resources the caller may see
 	// (GET /api/v1/resources)
 	ListResources(w http.ResponseWriter, r *http.Request, params ListResourcesParams)
@@ -916,6 +943,32 @@ func (siw *ServerInterfaceWrapper) GetProvider(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// UpdateProvider operation middleware
+func (siw *ServerInterfaceWrapper) UpdateProvider(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "providerId" -------------
+	var providerId ProviderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "providerId", r.PathValue("providerId"), &providerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "providerId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateProvider(w, r, providerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteCredential operation middleware
 func (siw *ServerInterfaceWrapper) DeleteCredential(w http.ResponseWriter, r *http.Request) {
 
@@ -1040,6 +1093,32 @@ func (siw *ServerInterfaceWrapper) GetProviderSyncStatus(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetProviderSyncStatus(w, r, providerId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ValidateProvider operation middleware
+func (siw *ServerInterfaceWrapper) ValidateProvider(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "providerId" -------------
+	var providerId ProviderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "providerId", r.PathValue("providerId"), &providerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "providerId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ValidateProvider(w, r, providerId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1423,6 +1502,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/providers", wrapper.CreateProvider)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/providers/{providerId}", wrapper.DeleteProvider)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers/{providerId}", wrapper.GetProvider)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/providers/{providerId}", wrapper.UpdateProvider)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/providers/{providerId}/validate", wrapper.ValidateProvider)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.DeleteCredential)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.ListCredentials)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.PutCredential)
@@ -1907,6 +1988,46 @@ func (response GetProviderdefaultApplicationProblemPlusJSONResponse) VisitGetPro
 	return err
 }
 
+type UpdateProviderRequestObject struct {
+	ProviderId ProviderId `json:"providerId"`
+	Body       *UpdateProviderJSONRequestBody
+}
+
+type UpdateProviderResponseObject interface {
+	VisitUpdateProviderResponse(w http.ResponseWriter) error
+}
+
+type UpdateProvider200JSONResponse Provider
+
+func (response UpdateProvider200JSONResponse) VisitUpdateProviderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateProviderdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response UpdateProviderdefaultApplicationProblemPlusJSONResponse) VisitUpdateProviderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DeleteCredentialRequestObject struct {
 	ProviderId ProviderId `json:"providerId"`
 	Params     DeleteCredentialParams
@@ -2048,6 +2169,45 @@ type GetProviderSyncStatusdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetProviderSyncStatusdefaultApplicationProblemPlusJSONResponse) VisitGetProviderSyncStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ValidateProviderRequestObject struct {
+	ProviderId ProviderId `json:"providerId"`
+}
+
+type ValidateProviderResponseObject interface {
+	VisitValidateProviderResponse(w http.ResponseWriter) error
+}
+
+type ValidateProvider200JSONResponse Provider
+
+func (response ValidateProvider200JSONResponse) VisitValidateProviderResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ValidateProviderdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ValidateProviderdefaultApplicationProblemPlusJSONResponse) VisitValidateProviderResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -2350,6 +2510,9 @@ type StrictServerInterface interface {
 	// GetProvider Get a provider
 	// (GET /api/v1/providers/{providerId})
 	GetProvider(ctx context.Context, request GetProviderRequestObject) (GetProviderResponseObject, error)
+	// UpdateProvider Update a provider
+	// (PATCH /api/v1/providers/{providerId})
+	UpdateProvider(ctx context.Context, request UpdateProviderRequestObject) (UpdateProviderResponseObject, error)
 	// DeleteCredential Delete a credential
 	// (DELETE /api/v1/providers/{providerId}/credentials)
 	DeleteCredential(ctx context.Context, request DeleteCredentialRequestObject) (DeleteCredentialResponseObject, error)
@@ -2362,6 +2525,9 @@ type StrictServerInterface interface {
 	// GetProviderSyncStatus Last inventory sync outcome of a provider
 	// (GET /api/v1/providers/{providerId}/sync-status)
 	GetProviderSyncStatus(ctx context.Context, request GetProviderSyncStatusRequestObject) (GetProviderSyncStatusResponseObject, error)
+	// ValidateProvider Check the connection to a provider
+	// (POST /api/v1/providers/{providerId}/validate)
+	ValidateProvider(ctx context.Context, request ValidateProviderRequestObject) (ValidateProviderResponseObject, error)
 	// ListResources List cached inventory resources the caller may see
 	// (GET /api/v1/resources)
 	ListResources(ctx context.Context, request ListResourcesRequestObject) (ListResourcesResponseObject, error)
@@ -2750,6 +2916,39 @@ func (sh *strictHandler) GetProvider(w http.ResponseWriter, r *http.Request, pro
 	}
 }
 
+// UpdateProvider operation middleware
+func (sh *strictHandler) UpdateProvider(w http.ResponseWriter, r *http.Request, providerId ProviderId) {
+	var request UpdateProviderRequestObject
+
+	request.ProviderId = providerId
+
+	var body UpdateProviderJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateProvider(ctx, request.(UpdateProviderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateProvider")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateProviderResponseObject); ok {
+		if err := validResponse.VisitUpdateProviderResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // DeleteCredential operation middleware
 func (sh *strictHandler) DeleteCredential(w http.ResponseWriter, r *http.Request, providerId ProviderId, params DeleteCredentialParams) {
 	var request DeleteCredentialRequestObject
@@ -2855,6 +3054,32 @@ func (sh *strictHandler) GetProviderSyncStatus(w http.ResponseWriter, r *http.Re
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetProviderSyncStatusResponseObject); ok {
 		if err := validResponse.VisitGetProviderSyncStatusResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ValidateProvider operation middleware
+func (sh *strictHandler) ValidateProvider(w http.ResponseWriter, r *http.Request, providerId ProviderId) {
+	var request ValidateProviderRequestObject
+
+	request.ProviderId = providerId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ValidateProvider(ctx, request.(ValidateProviderRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ValidateProvider")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ValidateProviderResponseObject); ok {
+		if err := validResponse.VisitValidateProviderResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

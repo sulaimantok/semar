@@ -8,6 +8,7 @@ export type IProjectMapping = components["schemas"]["ProjectMapping"];
 export type IProjectMappingCreate = components["schemas"]["ProjectMappingCreate"];
 export type IProvider = components["schemas"]["Provider"];
 export type IProviderCreate = components["schemas"]["ProviderCreate"];
+export type IProviderUpdate = components["schemas"]["ProviderUpdate"];
 export type IProviderType = components["schemas"]["ProviderType"];
 export type ISyncStatus = components["schemas"]["SyncStatus"];
 export type ICredential = components["schemas"]["Credential"];
@@ -58,6 +59,15 @@ export async function fetchProvider(providerId: string): Promise<IProvider> {
 
 export async function createProvider(body: IProviderCreate): Promise<IProvider> {
   return unwrap(await apiClient.POST("/api/v1/providers", { body }));
+}
+
+export async function updateProvider(providerId: string, body: IProviderUpdate): Promise<IProvider> {
+  return unwrap(await apiClient.PATCH("/api/v1/providers/{providerId}", { params: { path: { providerId } }, body }));
+}
+
+/** Connects through the provider's driver; resolves to the updated provider. */
+export async function validateProvider(providerId: string): Promise<IProvider> {
+  return unwrap(await apiClient.POST("/api/v1/providers/{providerId}/validate", { params: { path: { providerId } } }));
 }
 
 export async function deleteProvider(providerId: string): Promise<void> {

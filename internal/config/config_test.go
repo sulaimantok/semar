@@ -69,6 +69,10 @@ func TestLoadAPIRejectsInvalid(t *testing.T) {
 		{"SEMAR_COOKIE_SECURE": "sometimes"},
 		{"SEMAR_KEK": "short"},
 		{"SEMAR_KEK_PREVIOUS": "k0"},
+		{"SEMAR_TRUSTED_ORIGINS": "semar.example.com"},
+		{"SEMAR_TRUSTED_ORIGINS": "https://semar.example.com/app"},
+		{"SEMAR_TRUSTED_ORIGINS": "ftp://semar.example.com"},
+		{"SEMAR_TRUSTED_ORIGINS": " , "},
 	} {
 		m["SEMAR_DATABASE_URL"] = testDBURL
 		if _, ok := m["SEMAR_KEK"]; !ok {
@@ -97,5 +101,17 @@ func TestLoadAPIKEKRotation(t *testing.T) {
 	}
 	if cfg.KEKID != "k2" || len(cfg.KEKs) != 2 || cfg.KEKs["k1"][0] != 1 || cfg.KEKs["k2"][0] != 2 {
 		t.Fatalf("KEKs = %v (current %s)", cfg.KEKs, cfg.KEKID)
+	}
+}
+
+func TestLoadAPITrustedOrigins(t *testing.T) {
+	cfg, err := LoadAPI(apiEnv(map[string]string{
+		"SEMAR_TRUSTED_ORIGINS": "https://SEMAR.example.com/, http://127.0.0.1:5173",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.TrustedOrigins) != 2 || cfg.TrustedOrigins[0] != "https://semar.example.com" || cfg.TrustedOrigins[1] != "http://127.0.0.1:5173" {
+		t.Fatalf("TrustedOrigins = %v", cfg.TrustedOrigins)
 	}
 }

@@ -9,7 +9,9 @@ import { ApiErrorAlert } from "../../components/api-error-alert";
 import { useDeleteProvider } from "../../hooks/use-settings-mutations";
 import { useProvider, useSites, useSyncStatus } from "../../hooks/use-settings-queries";
 
+import { ConnectionCard } from "./components/connection-card";
 import { CredentialsSection } from "./components/credentials-section";
+import { EditProviderForm } from "./components/edit-provider-form";
 import { providerDetailStyles as styles } from "./provider-detail.styles";
 
 const healthDot: Record<string, string> = {
@@ -21,6 +23,7 @@ const healthDot: Record<string, string> = {
 export function ProviderDetailPage() {
   const { providerId = "" } = useParams();
   const isAdmin = useIsAdmin();
+  const [editing, setEditing] = useState(false);
   const provider = useProvider(providerId);
   const sites = useSites();
 
@@ -45,8 +48,19 @@ export function ProviderDetailPage() {
       </Link>
       <div className={styles.titleRow}>
         <h2 className={styles.title}>{p.name}</h2>
-        {isAdmin && <DeleteProvider providerId={p.id} name={p.name} />}
+        {isAdmin && (
+          <div className={styles.titleActions}>
+            {!editing && (
+              <button type="button" className={styles.secondary} onClick={() => setEditing(true)}>
+                Edit
+              </button>
+            )}
+            <DeleteProvider providerId={p.id} name={p.name} />
+          </div>
+        )}
       </div>
+
+      {isAdmin && editing && <EditProviderForm provider={p} onDone={() => setEditing(false)} />}
 
       <div className={styles.grid}>
         <section className={styles.card} aria-labelledby="provider-facts">
@@ -69,6 +83,7 @@ export function ProviderDetailPage() {
           </dl>
         </section>
         <SyncStatusCard providerId={p.id} />
+        <ConnectionCard provider={p} canCheck={isAdmin} />
       </div>
 
       <CredentialsSection provider={p} enabled={isAdmin} />

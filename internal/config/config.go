@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +34,10 @@ type API struct {
 	// KEKs holds the current KEK and previous ones kept for decryption until
 	// `semar-api kek-rewrap` has moved every credential to the current KEK.
 	KEKs map[string][]byte
+	// TrustedOrigins are the public browser origins allowed to send
+	// state-changing requests, for deployments behind a reverse proxy that
+	// rewrites Host. Empty compares Origin with the request's Host.
+	TrustedOrigins []string
 }
 
 // LoadAPI reads SEMAR_* variables via getenv (os.Getenv in production).
@@ -70,6 +75,13 @@ func LoadAPI(getenv func(string) string) (API, error) {
 		}
 		cfg.CookieSecure = b
 	}
+	if v := getenv("SEMAR_TRUSTED_ORIGINS"); v != "" {
+		origins, err := parseOrigins(v)
+		if err != nil {
+			return API{}, fmt.Errorf("SEMAR_TRUSTED_ORIGINS: %w", err)
+		}
+		cfg.TrustedOrigins = origins
+	}
 	cfg.DatabaseURL = getenv("SEMAR_DATABASE_URL")
 	if cfg.DatabaseURL == "" {
 		return API{}, errors.New("SEMAR_DATABASE_URL is required (postgres://user:password@host:5432/semar)")
@@ -100,4 +112,27 @@ func LoadAPI(getenv func(string) string) (API, error) {
 		cfg.ShutdownTimeout = d
 	}
 	return cfg, nil
+}
+
+// parseOrigins reads a comma-separated list of origins such as
+// "https://semar.example.com,https://semar.example.com:8443". Each must be
+// scheme://host[:port] exactly, as browsers send it in the Origin header.
+func parseOrigins(v string) ([]string, error) {
+	var out []string
+	for _, o := range strings.Split(v, ",") {
+		o = strings.TrimSpace(o)
+		if o == "" {
+			continue
+		}
+		u, err := url.Parse(o)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			return nil, fmt.Errorf("%q is not an origin (scheme://host[:port])", o)
+		}
+		out = append(out, strings.ToLower(u.Scheme+"://"+u.Host))
+	}
+	if len(out) == 0 {
+		return nil, errors.New("no origin given")
+	}
+	return out, nil
 }

@@ -60,6 +60,11 @@ type Provider struct {
 	TLSFingerprint   string
 	Capabilities     json.RawMessage
 	MaxMicroversions map[string]string
+	// CloudFingerprint is the identity reported by the driver on the last
+	// successful connection check; empty until checked. Two active
+	// providers can never share one (roadmap §3.5).
+	CloudFingerprint string
+	ValidatedAt      *time.Time
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	DeletedAt        *time.Time

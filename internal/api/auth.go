@@ -64,6 +64,8 @@ var operationAccess = map[string]access{
 	"CreateProjectMapping": accessAdmin,
 	"CreateProvider":       accessAdmin,
 	"DeleteProvider":       accessAdmin,
+	"UpdateProvider":       accessAdmin,
+	"ValidateProvider":     accessAdmin,
 	"ListCredentials":      accessAdmin,
 	"PutCredential":        accessAdmin,
 	"DeleteCredential":     accessAdmin,
@@ -129,8 +131,14 @@ func withAuthentication(st AuthStore, log *slog.Logger, next http.Handler) http.
 const CSRFHeader = "X-Requested-By"
 
 // withCSRFProtection rejects unsafe requests without CSRFHeader or with a
-// cross-origin Origin header.
-func withCSRFProtection(next http.Handler) http.Handler {
+// cross-origin Origin header. Origin is compared with trustedOrigins when
+// set (behind a reverse proxy that rewrites Host), else with the request's
+// Host.
+func withCSRFProtection(trustedOrigins []string, next http.Handler) http.Handler {
+	trusted := make(map[string]bool, len(trustedOrigins))
+	for _, o := range trustedOrigins {
+		trusted[strings.ToLower(strings.TrimRight(o, "/"))] = true
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
@@ -142,8 +150,13 @@ func withCSRFProtection(next http.Handler) http.Handler {
 			return
 		}
 		if origin := r.Header.Get("Origin"); origin != "" {
-			u, err := url.Parse(origin)
-			if err != nil || !strings.EqualFold(u.Host, r.Host) {
+			allowed := false
+			if len(trusted) > 0 {
+				allowed = trusted[strings.ToLower(origin)]
+			} else if u, err := url.Parse(origin); err == nil {
+				allowed = strings.EqualFold(u.Host, r.Host)
+			}
+			if !allowed {
 				writeProblem(w, r, http.StatusForbidden, "cross-origin request refused")
 				return
 			}

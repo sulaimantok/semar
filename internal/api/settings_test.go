@@ -34,8 +34,8 @@ type settingsAPI struct {
 }
 
 // newAnonymousAPI returns an API client with a bootstrapped admin account
-// but no session.
-func newAnonymousAPI(t *testing.T) *settingsAPI {
+// but no session. Options can be adjusted with tweak.
+func newAnonymousAPI(t *testing.T, tweak ...func(*Options)) *settingsAPI {
 	t.Helper()
 	st := storetest.New(t)
 	hash, err := auth.HashPassword(adminPassword, fastArgon2)
@@ -49,7 +49,7 @@ func newAnonymousAPI(t *testing.T) *settingsAPI {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &settingsAPI{t: t, st: st, keyring: keyring, h: NewHandler(Options{
+	opts := Options{
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Settings:    st,
 		Auth:        st,
@@ -57,13 +57,17 @@ func newAnonymousAPI(t *testing.T) *settingsAPI {
 		Credentials: st,
 		Secrets:     keyring,
 		Inventory:   st,
-	})}
+	}
+	for _, f := range tweak {
+		f(&opts)
+	}
+	return &settingsAPI{t: t, st: st, keyring: keyring, h: NewHandler(opts)}
 }
 
 // newSettingsAPI returns a client signed in as the bootstrap admin.
-func newSettingsAPI(t *testing.T) *settingsAPI {
+func newSettingsAPI(t *testing.T, tweak ...func(*Options)) *settingsAPI {
 	t.Helper()
-	a := newAnonymousAPI(t)
+	a := newAnonymousAPI(t, tweak...)
 	a.login("admin", adminPassword)
 	return a
 }
