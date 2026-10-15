@@ -25,7 +25,7 @@ export const NAV_ITEMS: readonly INavItem[] = [
   { label: "Network", to: "/network", icon: Network, released: false },
   { label: "Storage", to: "/storage", icon: HardDrive, released: false },
   { label: "Observability", to: "/observability", icon: Activity, released: false },
-  { label: "Settings", to: "/settings", icon: Settings, released: false },
+  { label: "Settings", to: "/settings", icon: Settings, released: true },
 ];
 
 export function visibleNavItems(items: readonly INavItem[] = NAV_ITEMS): INavItem[] {
