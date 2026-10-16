@@ -115,6 +115,8 @@ Provider credentials are write-only: `PUT /api/v1/providers/{id}/credentials` se
 semar-api kek-rewrap        # rewraps every credential with the current KEK; then drop the old key
 ```
 
+semar-worker never migrates: on start it waits until the migrations it needs are applied, and semar-api reports `not ready: schema` on `/readyz` while they are pending, so services can be restarted in any order during an upgrade.
+
 In production run semar-api and semar-worker as a database role that is neither a superuser nor the owner of the tables, and apply migrations separately with `semar-api migrate` as the owner: the append-only guarantee relies on triggers that a superuser or the table owner could disable. See [docs/runbooks/database-roles.md](docs/runbooks/database-roles.md).
 
 A lost local password is reset with `semar-api reset-password <username>` (new password on stdin; re-enables the account, ends its sessions, audited). See [docs/runbooks/break-glass.md](docs/runbooks/break-glass.md).

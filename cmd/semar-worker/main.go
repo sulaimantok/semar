@@ -48,6 +48,15 @@ func run() error {
 	}
 	defer st.Close()
 
+	// The worker never migrates. During an upgrade semar-api (or
+	// `semar-api migrate`) may still be applying migrations; syncing before
+	// they land would query columns that do not exist yet.
+	if err := st.WaitForSchema(ctx, 2*time.Second, func(applied, required int64) {
+		log.Info("waiting for database migrations", "applied", applied, "required", required)
+	}); err != nil {
+		return err
+	}
+
 	codec, err := workflow.NewAESGCMCodec(cfg.PayloadKeyID, cfg.PayloadKeys)
 	if err != nil {
 		return err

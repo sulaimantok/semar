@@ -107,8 +107,10 @@ func run() error {
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: api.NewHandler(api.Options{
-			Logger:         log,
-			Checks:         map[string]api.ReadinessCheck{"database": st.Ping},
+			Logger: log,
+			// "schema" keeps an API started with migrations off out of
+			// rotation until `semar-api migrate` has run.
+			Checks:         map[string]api.ReadinessCheck{"database": st.Ping, "schema": st.CheckSchema},
 			Settings:       st,
 			Auth:           st,
 			Audit:          st,

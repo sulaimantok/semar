@@ -41,7 +41,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE semar_owner IN SCHEMA public
    REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM semar_app;
    ```
 
-3. Run semar-api and semar-worker with the app role and without startup migrations:
+3. Run semar-api and semar-worker with the app role and without startup migrations. Until step 1 has run, semar-api reports `not ready: schema` on `/readyz` and semar-worker waits (logging `waiting for database migrations`) instead of syncing against an older schema, so the order of restarts does not matter:
 
    ```bash
    SEMAR_DATABASE_URL='postgres://semar_app:<app password>@db.example.com:5432/semar?sslmode=verify-full'
