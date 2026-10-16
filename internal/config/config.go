@@ -44,6 +44,10 @@ type API struct {
 	// ConsoleIdleTimeout and ConsoleMaxDuration bound console sessions.
 	ConsoleIdleTimeout time.Duration
 	ConsoleMaxDuration time.Duration
+	// AuditWebhookURL receives a copy of every audit event; empty disables
+	// streaming. AuditWebhookSecret signs deliveries (HMAC-SHA256).
+	AuditWebhookURL    string
+	AuditWebhookSecret string
 }
 
 // LoadAPI reads SEMAR_* variables via getenv (os.Getenv in production).
@@ -89,6 +93,17 @@ func LoadAPI(getenv func(string) string) (API, error) {
 		cfg.TrustedOrigins = origins
 	}
 	cfg.MetricsAddr = getenv("SEMAR_METRICS_ADDR")
+	if v := getenv("SEMAR_AUDIT_WEBHOOK_URL"); v != "" {
+		u, err := url.Parse(v)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return API{}, fmt.Errorf("SEMAR_AUDIT_WEBHOOK_URL: want an http(s) URL, got %q", v)
+		}
+		cfg.AuditWebhookURL = v
+		cfg.AuditWebhookSecret = getenv("SEMAR_AUDIT_WEBHOOK_SECRET")
+		if cfg.AuditWebhookSecret != "" && len(cfg.AuditWebhookSecret) < 32 {
+			return API{}, errors.New("SEMAR_AUDIT_WEBHOOK_SECRET: use at least 32 characters")
+		}
+	}
 	for _, d := range []struct {
 		name     string
 		dst      *time.Duration

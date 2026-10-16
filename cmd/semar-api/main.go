@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/sulaimantok/semar/internal/api"
+	"github.com/sulaimantok/semar/internal/auditsink"
 	"github.com/sulaimantok/semar/internal/auth"
 	"github.com/sulaimantok/semar/internal/config"
 	"github.com/sulaimantok/semar/internal/metrics"
@@ -104,6 +105,17 @@ func run() error {
 		log.Info("serving metrics", "addr", cfg.MetricsAddr)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if cfg.AuditWebhookURL != "" {
+		if cfg.AuditWebhookSecret == "" {
+			log.Warn("audit webhook deliveries are not signed; set SEMAR_AUDIT_WEBHOOK_SECRET")
+		}
+		go (&auditsink.Streamer{Store: st, URL: cfg.AuditWebhookURL, Secret: cfg.AuditWebhookSecret, Logger: log}).Run(ctx)
+		log.Info("streaming the audit log", "sink", "webhook")
+	}
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: api.NewHandler(api.Options{
@@ -128,9 +140,6 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errc := make(chan error, 1)
 	go func() {
