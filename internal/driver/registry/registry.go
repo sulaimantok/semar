@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,6 +61,42 @@ type cached struct {
 
 // Driver returns the driver for p.
 func (r *Resolver) Driver(ctx context.Context, p model.Provider) (contract.CloudDriver, error) {
+	return r.driverWith(ctx, p, model.PurposeDiscovery, "provider")
+}
+
+// ConsoleDriver returns a driver allowed to open consoles of a VM whose
+// provider-side scope is vmScope (OpenStack project ID, "pool:<name>" on
+// Proxmox). Discovery credentials usually cannot: PVEAuditor lacks
+// VM.Console and Nova's reader role may not create remote consoles. So the
+// mutate credential of that scope is preferred (ADR-0005), and the
+// discovery credential is the fallback for clouds where it was granted
+// console access.
+func (r *Resolver) ConsoleDriver(ctx context.Context, p model.Provider, vmScope string) (contract.CloudDriver, error) {
+	if scope := mutateScope(p.Type, vmScope); scope != "" {
+		d, err := r.driverWith(ctx, p, model.PurposeMutate, scope)
+		if !errors.Is(err, ErrNoCredential) {
+			return d, err
+		}
+	}
+	return r.Driver(ctx, p)
+}
+
+// mutateScope maps a VM's external scope to the credential scope of its
+// mutate credential.
+func mutateScope(t contract.ProviderType, vmScope string) string {
+	switch {
+	case vmScope == "":
+		return ""
+	case t == contract.ProviderOpenStack:
+		return "project:" + vmScope
+	case t == contract.ProviderProxmox && strings.HasPrefix(vmScope, "pool:"):
+		return vmScope
+	default:
+		return ""
+	}
+}
+
+func (r *Resolver) driverWith(ctx context.Context, p model.Provider, purpose model.CredentialPurpose, scope string) (contract.CloudDriver, error) {
 	if p.Type == contract.ProviderFake {
 		return New(p)
 	}
@@ -69,18 +106,19 @@ func (r *Resolver) Driver(ctx context.Context, p model.Provider) (contract.Cloud
 	if r.Credentials == nil || r.Secrets == nil {
 		return nil, fmt.Errorf("%w: credential decryption is not configured (SEMAR_KEK): %w", ErrNoCredential, contract.ErrUnauthorized)
 	}
-	cred, plaintext, err := r.Credentials.OpenCredential(ctx, r.Secrets, p.ID, model.PurposeDiscovery, "provider")
+	cred, plaintext, err := r.Credentials.OpenCredential(ctx, r.Secrets, p.ID, purpose, scope)
 	if errors.Is(err, store.ErrNotFound) {
-		return nil, fmt.Errorf("%w: none stored for provider %s: %w", ErrNoCredential, p.ID, contract.ErrUnauthorized)
+		return nil, fmt.Errorf("%w: no %s credential for %s stored for provider %s: %w", ErrNoCredential, purpose, scope, p.ID, contract.ErrUnauthorized)
 	}
 	if err != nil {
 		return nil, err
 	}
 	defer clear(plaintext)
 
+	cacheID := p.ID + "|" + string(purpose) + "|" + scope
 	key := p.UpdatedAt.UTC().Format(time.RFC3339Nano) + "|" + cred.ID + "|" + cred.RotatedAt.UTC().Format(time.RFC3339Nano)
 	r.mu.Lock()
-	if c, ok := r.cache[p.ID]; ok && c.key == key {
+	if c, ok := r.cache[cacheID]; ok && c.key == key {
 		r.mu.Unlock()
 		return c.driver, nil
 	}
@@ -88,7 +126,7 @@ func (r *Resolver) Driver(ctx context.Context, p model.Provider) (contract.Cloud
 
 	var sec map[string]string
 	if err := json.Unmarshal(plaintext, &sec); err != nil {
-		return nil, fmt.Errorf("%w: discovery credential is not a JSON object", contract.ErrUnauthorized)
+		return nil, fmt.Errorf("%w: %s credential is not a JSON object", contract.ErrUnauthorized, purpose)
 	}
 	d, err := r.build(p, sec)
 	if err != nil {
@@ -98,7 +136,7 @@ func (r *Resolver) Driver(ctx context.Context, p model.Provider) (contract.Cloud
 	if r.cache == nil {
 		r.cache = map[string]cached{}
 	}
-	r.cache[p.ID] = cached{key: key, driver: d}
+	r.cache[cacheID] = cached{key: key, driver: d}
 	r.mu.Unlock()
 	return d, nil
 }
@@ -128,10 +166,14 @@ func (r *Resolver) build(p model.Provider, sec map[string]string) (contract.Clou
 	}
 }
 
-// Forget drops a provider's cached driver (after removal).
+// Forget drops a provider's cached drivers (after removal).
 func (r *Resolver) Forget(providerID string) {
 	r.mu.Lock()
-	delete(r.cache, providerID)
+	for k := range r.cache {
+		if strings.HasPrefix(k, providerID+"|") {
+			delete(r.cache, k)
+		}
+	}
 	r.mu.Unlock()
 }
 

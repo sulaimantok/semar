@@ -66,6 +66,9 @@ var operationAccess = map[string]access{
 	"DeleteProvider":       accessAdmin,
 	"UpdateProvider":       accessAdmin,
 	"ValidateProvider":     accessAdmin,
+	// Requires an Admin or Operator binding covering the VM (checked in
+	// the handler, see consoleVisibility).
+	"CreateConsoleSession": accessAuthenticated,
 	"ListCredentials":      accessAdmin,
 	"PutCredential":        accessAdmin,
 	"DeleteCredential":     accessAdmin,
@@ -135,10 +138,7 @@ const CSRFHeader = "X-Requested-By"
 // set (behind a reverse proxy that rewrites Host), else with the request's
 // Host.
 func withCSRFProtection(trustedOrigins []string, next http.Handler) http.Handler {
-	trusted := make(map[string]bool, len(trustedOrigins))
-	for _, o := range trustedOrigins {
-		trusted[strings.ToLower(strings.TrimRight(o, "/"))] = true
-	}
+	originOK := originChecker(trustedOrigins)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
@@ -149,20 +149,30 @@ func withCSRFProtection(trustedOrigins []string, next http.Handler) http.Handler
 			writeProblem(w, r, http.StatusForbidden, "missing "+CSRFHeader+" header")
 			return
 		}
-		if origin := r.Header.Get("Origin"); origin != "" {
-			allowed := false
-			if len(trusted) > 0 {
-				allowed = trusted[strings.ToLower(origin)]
-			} else if u, err := url.Parse(origin); err == nil {
-				allowed = strings.EqualFold(u.Host, r.Host)
-			}
-			if !allowed {
-				writeProblem(w, r, http.StatusForbidden, "cross-origin request refused")
-				return
-			}
+		if origin := r.Header.Get("Origin"); origin != "" && !originOK(origin, r.Host) {
+			writeProblem(w, r, http.StatusForbidden, "cross-origin request refused")
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// originChecker reports whether a browser Origin may act on this API: one
+// of trustedOrigins when set (behind a reverse proxy that rewrites Host),
+// else the request's own Host. CSRF protection and console WebSockets use
+// the same rule.
+func originChecker(trustedOrigins []string) func(origin, host string) bool {
+	trusted := make(map[string]bool, len(trustedOrigins))
+	for _, o := range trustedOrigins {
+		trusted[strings.ToLower(strings.TrimRight(o, "/"))] = true
+	}
+	return func(origin, host string) bool {
+		if len(trusted) > 0 {
+			return trusted[strings.ToLower(origin)]
+		}
+		u, err := url.Parse(origin)
+		return err == nil && u.Host != "" && strings.EqualFold(u.Host, host)
+	}
 }
 
 // dummyHash is verified against for unknown users so that login takes the

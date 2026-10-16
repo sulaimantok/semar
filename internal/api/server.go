@@ -54,6 +54,15 @@ type Options struct {
 	Drivers DriverFactory
 	// ValidateTimeout bounds one connection check. Defaults to 15s.
 	ValidateTimeout time.Duration
+	// ConsoleTokens stores console tokens; without it consoles are off.
+	ConsoleTokens ConsoleTokenStore
+	// ConsoleDrivers builds console-capable drivers. Defaults to the same
+	// registry.Resolver as Drivers.
+	ConsoleDrivers ConsoleDriverFactory
+	// ConsoleIdleTimeout and ConsoleMaxDuration bound console sessions.
+	// Defaults: 15 minutes and 4 hours.
+	ConsoleIdleTimeout time.Duration
+	ConsoleMaxDuration time.Duration
 	// Metrics receives HTTP request metrics; nil disables them.
 	Metrics *metrics.Registry
 	// TrustedOrigins are the browser origins (scheme://host[:port]) allowed
@@ -76,18 +85,27 @@ func NewHandler(opts Options) http.Handler {
 	if opts.MaxBodyBytes <= 0 {
 		opts.MaxBodyBytes = 1 << 20
 	}
+	resolver := &registry.Resolver{Secrets: opts.Secrets}
+	if c, ok := opts.Credentials.(registry.CredentialOpener); ok {
+		resolver.Credentials = c
+	}
 	if opts.Drivers == nil {
-		r := &registry.Resolver{Secrets: opts.Secrets}
-		if c, ok := opts.Credentials.(registry.CredentialOpener); ok {
-			r.Credentials = c
-		}
-		opts.Drivers = r.Driver
+		opts.Drivers = resolver.Driver
+	}
+	if opts.ConsoleDrivers == nil {
+		opts.ConsoleDrivers = resolver.ConsoleDriver
+	}
+	if opts.ConsoleIdleTimeout <= 0 {
+		opts.ConsoleIdleTimeout = 15 * time.Minute
+	}
+	if opts.ConsoleMaxDuration <= 0 {
+		opts.ConsoleMaxDuration = 4 * time.Hour
 	}
 	if opts.ValidateTimeout <= 0 {
 		opts.ValidateTimeout = 15 * time.Second
 	}
 	log := opts.Logger
-	srv := &server{opts: opts, logins: newLoginLimiter(opts.LoginLimits)}
+	srv := &server{opts: opts, logins: newLoginLimiter(opts.LoginLimits), originOK: originChecker(opts.TrustedOrigins)}
 
 	strict := gen.NewStrictHandlerWithOptions(srv, []gen.StrictMiddlewareFunc{srv.authorize}, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -107,6 +125,8 @@ func NewHandler(opts Options) http.Handler {
 			writeProblem(w, r, http.StatusBadRequest, err.Error())
 		},
 	})
+	// Console WebSockets cannot go through the generated JSON handlers.
+	mux.HandleFunc("GET "+ConsoleWebSocketPath, srv.serveConsole)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusNotFound, "no route for "+r.Method+" "+r.URL.Path)
 	})
@@ -124,8 +144,9 @@ func NewHandler(opts Options) http.Handler {
 
 // server implements gen.StrictServerInterface.
 type server struct {
-	opts   Options
-	logins *loginLimiter
+	opts     Options
+	logins   *loginLimiter
+	originOK func(origin, host string) bool
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

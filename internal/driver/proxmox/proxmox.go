@@ -100,6 +100,12 @@ func (d *Driver) Capabilities() contract.Capabilities {
 // failures and 5xx answers move on to the next endpoint; authorization and
 // not-found answers do not, since every node would give the same answer.
 func (d *Driver) get(ctx context.Context, path string, out any) error {
+	_, err := d.do(ctx, http.MethodGet, path, nil, out)
+	return err
+}
+
+// do sends a request with failover and returns the endpoint that answered.
+func (d *Driver) do(ctx context.Context, method, path string, form url.Values, out any) (string, error) {
 	n := len(d.cfg.Endpoints)
 	start := int(d.preferred.Load())
 	var lastErr error
@@ -109,20 +115,25 @@ func (d *Driver) get(ctx context.Context, path string, out any) error {
 			Data any `json:"data"`
 		}{Data: out}
 		_, err := httpx.Do(ctx, d.cfg.HTTPClient, httpx.Request{
-			Method: http.MethodGet,
+			Method: method,
 			URL:    d.cfg.Endpoints[idx] + "/api2/json" + path,
-			Header: http.Header{"Authorization": {"PVEAPIToken=" + d.cfg.TokenID + "=" + d.cfg.TokenSecret}},
+			Header: d.authHeader(),
+			Form:   form,
 		}, &env)
 		if err == nil {
 			d.preferred.Store(int32(idx)) //nolint:gosec // G115: idx < len(Endpoints), a handful of nodes
-			return nil
+			return d.cfg.Endpoints[idx], nil
 		}
 		if ctx.Err() != nil || !errors.Is(err, contract.ErrUnavailable) {
-			return err
+			return "", err
 		}
 		lastErr = err
 	}
-	return lastErr
+	return "", lastErr
+}
+
+func (d *Driver) authHeader() http.Header {
+	return http.Header{"Authorization": {"PVEAPIToken=" + d.cfg.TokenID + "=" + d.cfg.TokenSecret}}
 }
 
 // Validate implements contract.CloudDriver. The identity is the cluster

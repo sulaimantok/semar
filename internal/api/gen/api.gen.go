@@ -18,6 +18,24 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for ConsoleKind.
+const (
+	Serial ConsoleKind = "serial"
+	Vnc    ConsoleKind = "vnc"
+)
+
+// Valid indicates whether the value is a known member of the ConsoleKind enum.
+func (e ConsoleKind) Valid() bool {
+	switch e {
+	case Serial:
+		return true
+	case Vnc:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CredentialPurpose.
 const (
 	Capi      CredentialPurpose = "capi"
@@ -202,6 +220,26 @@ func (e ListResourcesParamsArch) Valid() bool {
 type Capacity struct {
 	Hypervisors *HypervisorCapacity `json:"hypervisors,omitempty"`
 	Vms         VMCapacity          `json:"vms"`
+}
+
+// ConsoleKind defines model for ConsoleKind.
+type ConsoleKind string
+
+// ConsoleRequest defines model for ConsoleRequest.
+type ConsoleRequest struct {
+	Kind ConsoleKind `json:"kind"`
+}
+
+// ConsoleSession defines model for ConsoleSession.
+type ConsoleSession struct {
+	ExpiresAt time.Time   `json:"expiresAt"`
+	Kind      ConsoleKind `json:"kind"`
+
+	// Token Single-use token; send it as the subprotocol `semar.token.<token>`.
+	Token string `json:"token"`
+
+	// WebsocketPath Examples: /api/v1/console/ws
+	WebsocketPath string `json:"websocketPath"`
 }
 
 // CountByKey defines model for CountByKey.
@@ -606,6 +644,9 @@ type UpdateProviderJSONRequestBody = ProviderUpdate
 // PutCredentialJSONRequestBody defines body for PutCredential for application/json ContentType.
 type PutCredentialJSONRequestBody = CredentialPut
 
+// CreateConsoleSessionJSONRequestBody defines body for CreateConsoleSession for application/json ContentType.
+type CreateConsoleSessionJSONRequestBody = ConsoleRequest
+
 // CreateSiteJSONRequestBody defines body for CreateSite for application/json ContentType.
 type CreateSiteJSONRequestBody = SiteCreate
 
@@ -668,6 +709,9 @@ type ServerInterface interface {
 	// ListResources List cached inventory resources the caller may see
 	// (GET /api/v1/resources)
 	ListResources(w http.ResponseWriter, r *http.Request, params ListResourcesParams)
+	// CreateConsoleSession Issue a console token for a VM
+	// (POST /api/v1/resources/{providerId}/vm/{externalId}/console)
+	CreateConsoleSession(w http.ResponseWriter, r *http.Request, providerId ProviderId, externalId string)
 	// GetResource One cached resource with its recent change history
 	// (GET /api/v1/resources/{providerId}/{kind}/{externalId})
 	GetResource(w http.ResponseWriter, r *http.Request, providerId ProviderId, kind ResourceKind, externalId string)
@@ -1267,6 +1311,41 @@ func (siw *ServerInterfaceWrapper) ListResources(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// CreateConsoleSession operation middleware
+func (siw *ServerInterfaceWrapper) CreateConsoleSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "providerId" -------------
+	var providerId ProviderId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "providerId", r.PathValue("providerId"), &providerId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "providerId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "externalId" -------------
+	var externalId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "externalId", r.PathValue("externalId"), &externalId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "externalId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateConsoleSession(w, r, providerId, externalId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetResource operation middleware
 func (siw *ServerInterfaceWrapper) GetResource(w http.ResponseWriter, r *http.Request) {
 
@@ -1524,6 +1603,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/providers/{providerId}/credentials", wrapper.PutCredential)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/resources", wrapper.ListResources)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/resources/{providerId}/{kind}/{externalId}", wrapper.GetResource)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/resources/{providerId}/vm/{externalId}/console", wrapper.CreateConsoleSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/capacity", wrapper.GetCapacity)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers/{providerId}/sync-status", wrapper.GetProviderSyncStatus)
 
@@ -2273,6 +2353,47 @@ func (response ListResourcesdefaultApplicationProblemPlusJSONResponse) VisitList
 	return err
 }
 
+type CreateConsoleSessionRequestObject struct {
+	ProviderId ProviderId `json:"providerId"`
+	ExternalId string     `json:"externalId"`
+	Body       *CreateConsoleSessionJSONRequestBody
+}
+
+type CreateConsoleSessionResponseObject interface {
+	VisitCreateConsoleSessionResponse(w http.ResponseWriter) error
+}
+
+type CreateConsoleSession201JSONResponse ConsoleSession
+
+func (response CreateConsoleSession201JSONResponse) VisitCreateConsoleSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateConsoleSessiondefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response CreateConsoleSessiondefaultApplicationProblemPlusJSONResponse) VisitCreateConsoleSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetResourceRequestObject struct {
 	ProviderId ProviderId   `json:"providerId"`
 	Kind       ResourceKind `json:"kind"`
@@ -2546,6 +2667,9 @@ type StrictServerInterface interface {
 	// ListResources List cached inventory resources the caller may see
 	// (GET /api/v1/resources)
 	ListResources(ctx context.Context, request ListResourcesRequestObject) (ListResourcesResponseObject, error)
+	// CreateConsoleSession Issue a console token for a VM
+	// (POST /api/v1/resources/{providerId}/vm/{externalId}/console)
+	CreateConsoleSession(ctx context.Context, request CreateConsoleSessionRequestObject) (CreateConsoleSessionResponseObject, error)
 	// GetResource One cached resource with its recent change history
 	// (GET /api/v1/resources/{providerId}/{kind}/{externalId})
 	GetResource(ctx context.Context, request GetResourceRequestObject) (GetResourceResponseObject, error)
@@ -3121,6 +3245,40 @@ func (sh *strictHandler) ListResources(w http.ResponseWriter, r *http.Request, p
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListResourcesResponseObject); ok {
 		if err := validResponse.VisitListResourcesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateConsoleSession operation middleware
+func (sh *strictHandler) CreateConsoleSession(w http.ResponseWriter, r *http.Request, providerId ProviderId, externalId string) {
+	var request CreateConsoleSessionRequestObject
+
+	request.ProviderId = providerId
+	request.ExternalId = externalId
+
+	var body CreateConsoleSessionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateConsoleSession(ctx, request.(CreateConsoleSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateConsoleSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateConsoleSessionResponseObject); ok {
+		if err := validResponse.VisitCreateConsoleSessionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

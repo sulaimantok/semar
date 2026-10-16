@@ -41,6 +41,9 @@ type API struct {
 	// MetricsAddr is the listen address of the separate /metrics listener;
 	// empty disables it.
 	MetricsAddr string
+	// ConsoleIdleTimeout and ConsoleMaxDuration bound console sessions.
+	ConsoleIdleTimeout time.Duration
+	ConsoleMaxDuration time.Duration
 }
 
 // LoadAPI reads SEMAR_* variables via getenv (os.Getenv in production).
@@ -86,6 +89,23 @@ func LoadAPI(getenv func(string) string) (API, error) {
 		cfg.TrustedOrigins = origins
 	}
 	cfg.MetricsAddr = getenv("SEMAR_METRICS_ADDR")
+	for _, d := range []struct {
+		name     string
+		dst      *time.Duration
+		def, min time.Duration
+	}{
+		{"SEMAR_CONSOLE_IDLE_TIMEOUT", &cfg.ConsoleIdleTimeout, 15 * time.Minute, 30 * time.Second},
+		{"SEMAR_CONSOLE_MAX_DURATION", &cfg.ConsoleMaxDuration, 4 * time.Hour, time.Minute},
+	} {
+		*d.dst = d.def
+		if v := getenv(d.name); v != "" {
+			x, err := time.ParseDuration(v)
+			if err != nil || x < d.min || x > 24*time.Hour {
+				return API{}, fmt.Errorf("%s: want a duration between %s and 24h, got %q", d.name, d.min, v)
+			}
+			*d.dst = x
+		}
+	}
 	cfg.DatabaseURL = getenv("SEMAR_DATABASE_URL")
 	if cfg.DatabaseURL == "" {
 		return API{}, errors.New("SEMAR_DATABASE_URL is required (postgres://user:password@host:5432/semar)")

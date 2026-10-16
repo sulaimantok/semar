@@ -246,6 +246,11 @@ func (d *Driver) reqHeader(ctx context.Context) http.Header {
 // call sends an authenticated request to a catalog service. path is
 // relative to the service endpoint; a 401 renews the token once.
 func (d *Driver) call(ctx context.Context, service, path, microversion string, out any) error {
+	return d.send(ctx, http.MethodGet, service, path, microversion, nil, out)
+}
+
+// send is call with a method and an optional JSON body.
+func (d *Driver) send(ctx context.Context, method, service, path, microversion string, body, out any) error {
 	for attempt := 0; ; attempt++ {
 		t, err := d.currentToken(ctx, attempt > 0)
 		if err != nil {
@@ -260,7 +265,7 @@ func (d *Driver) call(ctx context.Context, service, path, microversion string, o
 		if microversion != "" {
 			h.Set("OpenStack-API-Version", microversion)
 		}
-		_, err = httpx.Do(ctx, d.cfg.HTTPClient, httpx.Request{Method: http.MethodGet, URL: base + path, Header: h}, out)
+		_, err = httpx.Do(ctx, d.cfg.HTTPClient, httpx.Request{Method: method, URL: base + path, Header: h, Body: body}, out)
 		var se *httpx.StatusError
 		if attempt == 0 && errors.As(err, &se) && se.Status == http.StatusUnauthorized {
 			continue

@@ -39,6 +39,7 @@ var matrixRequests = []struct {
 	// Callers outside p1's scope get 404, which still counts as access to
 	// the operation; visibility itself is checked in the inventory tests.
 	{"GetResource", matrixRequest{"GET", "/api/v1/resources/pve-lab/vm/p1", ""}},
+	{"CreateConsoleSession", matrixRequest{"POST", "/api/v1/resources/pve-lab/vm/p1/console", `{"kind":"vnc"}`}},
 	{"GetProviderSyncStatus", matrixRequest{"GET", "/api/v1/providers/pve-lab/sync-status", ""}},
 	{"ListCredentials", matrixRequest{"GET", "/api/v1/providers/pve-lab/credentials", ""}},
 	{"CreateSite", matrixRequest{"POST", "/api/v1/sites", `{"id":"site-m","name":"Matrix"}`}},
@@ -51,6 +52,35 @@ var matrixRequests = []struct {
 	{"ValidateProvider", matrixRequest{"POST", "/api/v1/providers/spare/validate", ""}},
 	{"DeleteProvider", matrixRequest{"DELETE", "/api/v1/providers/spare", ""}},
 	{"Logout", matrixRequest{"POST", "/api/v1/auth/logout", ""}},
+}
+
+// roleChecked lists authenticated operations that also check the caller's
+// role on the target, with the expected status per caller.
+var roleChecked = map[string]func(bindings []auth.RoleBinding, globalAdmin bool) int{
+	// p1 is a VM of project payment on pve-lab: consoles need an Admin or
+	// Operator binding covering it; viewers who can see it get 403, callers
+	// who cannot see it 404.
+	"CreateConsoleSession": func(bs []auth.RoleBinding, globalAdmin bool) int {
+		if globalAdmin {
+			return http.StatusCreated
+		}
+		sees, operates := false, false
+		for _, b := range bs {
+			covers := (b.ProjectID == "" || b.ProjectID == "payment") && (b.ProviderID == "" || b.ProviderID == "pve-lab")
+			if covers {
+				sees = true
+				operates = operates || b.Role == auth.RoleAdmin || b.Role == auth.RoleOperator
+			}
+		}
+		switch {
+		case operates:
+			return http.StatusCreated
+		case sees:
+			return http.StatusForbidden
+		default:
+			return http.StatusNotFound
+		}
+	},
 }
 
 func TestAuthorizationMatrixCoversEveryOperation(t *testing.T) {
@@ -122,6 +152,11 @@ func TestAuthorizationMatrix(t *testing.T) {
 				case required == accessAdmin && !isAdmin:
 					if got != http.StatusForbidden {
 						t.Errorf("%s: status %d, want 403", row.operation, got)
+					}
+				case roleChecked[row.operation] != nil:
+					want := roleChecked[row.operation](c.bindings, isAdmin)
+					if got != want {
+						t.Errorf("%s: status %d, want %d; body: %s", row.operation, got, want, rec.Body.String())
 					}
 				default:
 					if got == http.StatusUnauthorized || got == http.StatusForbidden || got >= 500 {

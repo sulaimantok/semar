@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,3 +112,46 @@ func (noSecrets) Rewrap(s secret.Sealed, _ []byte) (secret.Sealed, bool, error) 
 	return s, false, nil
 }
 func (noSecrets) CurrentVersion() string { return "k1" }
+
+func TestConsoleDriverPrefersMutateCredential(t *testing.T) {
+	ctx := context.Background()
+	var asked []string
+	r := &Resolver{Secrets: noSecrets{}, Credentials: purposeOpener(func(purpose model.CredentialPurpose, scope string) (model.ProviderCredential, []byte, error) {
+		asked = append(asked, string(purpose)+" "+scope)
+		switch {
+		case purpose == model.PurposeMutate && scope == "pool:payment":
+			return model.ProviderCredential{ID: "mutate-payment"}, []byte(`{"token_id":"semar@pve!payment","token_secret":"s"}`), nil
+		case purpose == model.PurposeDiscovery:
+			return model.ProviderCredential{ID: "discovery"}, []byte(`{"token_id":"semar@pve!discovery","token_secret":"s"}`), nil
+		}
+		return model.ProviderCredential{}, nil, store.ErrNotFound
+	})}
+	p := model.Provider{ID: "pve", Type: contract.ProviderProxmox, Endpoints: []string{"https://pve1.example.com:8006"}}
+
+	mutate, err := r.ConsoleDriver(ctx, p, "pool:payment")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback, err := r.ConsoleDriver(ctx, p, "pool:search")
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, _ := r.Driver(ctx, p)
+	if mutate == fallback || fallback != discovery {
+		t.Fatal("console drivers: want the mutate credential for pool:payment and discovery otherwise")
+	}
+	want := "mutate pool:payment|mutate pool:search|discovery provider|discovery provider"
+	if got := strings.Join(asked, "|"); got != want {
+		t.Fatalf("credentials asked: %s, want %s", got, want)
+	}
+	if mutateScope(contract.ProviderOpenStack, "abc123") != "project:abc123" || mutateScope(contract.ProviderProxmox, "") != "" {
+		t.Fatal("mutateScope")
+	}
+}
+
+// purposeOpener adapts a function to CredentialOpener.
+type purposeOpener func(purpose model.CredentialPurpose, scope string) (model.ProviderCredential, []byte, error)
+
+func (f purposeOpener) OpenCredential(_ context.Context, _ secret.Store, _ string, purpose model.CredentialPurpose, scope string) (model.ProviderCredential, []byte, error) {
+	return f(purpose, scope)
+}

@@ -274,3 +274,44 @@ func splitEvery(s string, n int) []string {
 	}
 	return append(out, s)
 }
+
+func TestOpenConsoleUsesTicketsServerSide(t *testing.T) {
+	var form string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		p := strings.TrimPrefix(r.URL.Path, "/api2/json")
+		switch {
+		case p == "/cluster/resources":
+			data(w, []map[string]any{{"type": "qemu", "vmid": 100, "node": "pve1", "template": 0}})
+		case r.Method == http.MethodPost && p == "/nodes/pve1/qemu/100/vncproxy":
+			_ = r.ParseForm()
+			form = r.PostForm.Encode()
+			data(w, map[string]any{"port": "5900", "ticket": "PVEVNC:ABC+/=", "user": "semar@pve!discovery"})
+		case r.Method == http.MethodPost && p == "/nodes/pve1/qemu/100/termproxy":
+			data(w, map[string]any{"port": 5901, "ticket": "PVEVNC:T", "user": "semar@pve!discovery"})
+		default:
+			w.WriteHeader(http.StatusNotImplemented)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	d := newDriver(t, srv.URL)
+	vnc, err := d.OpenConsole(context.Background(), "100", contract.ConsoleVNC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := strings.TrimPrefix(srv.URL, "http://")
+	if vnc.URL != "ws://"+host+"/api2/json/nodes/pve1/qemu/100/vncwebsocket?port=5900&vncticket=PVEVNC%3AABC%2B%2F%3D" ||
+		vnc.VNCPassword != "PVEVNC:ABC+/=" || vnc.Header.Get("Authorization") != token || form != "websocket=1" {
+		t.Fatalf("vnc target = %+v (form %q)", vnc, form)
+	}
+	ser, err := d.OpenConsole(context.Background(), "100", contract.ConsoleSerial)
+	if err != nil || ser.Framing != contract.SerialPVETermproxy || ser.SerialAck != "semar@pve!discovery:PVEVNC:T\n" || !strings.Contains(ser.URL, "port=5901") {
+		t.Fatalf("serial target = %+v, %v", ser, err)
+	}
+	if _, err := d.OpenConsole(context.Background(), "999", contract.ConsoleVNC); !errors.Is(err, contract.ErrNotFound) {
+		t.Fatalf("unknown VM: %v", err)
+	}
+}
