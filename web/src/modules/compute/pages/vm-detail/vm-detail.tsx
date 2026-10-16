@@ -1,11 +1,13 @@
 import { Link, useParams } from "react-router";
 
+import { canOperate, useMe } from "@/modules/auth";
 import { useProjectOptions, useSiteOptions } from "@/modules/global-filter";
 import { cn } from "@/shared/utils/cn";
 import { formatAge, formatMemoryMiB } from "@/shared/utils/format";
 
 import { useProviders } from "../../hooks/use-providers";
 import { useVm } from "../../hooks/use-vm";
+import { vmPath } from "../../utils/vm-path";
 
 import { vmDetailStyles as styles } from "./vm-detail.styles";
 
@@ -43,6 +45,7 @@ export function VmDetailPage() {
   const providers = useProviders();
   const sites = useSiteOptions();
   const projects = useProjectOptions();
+  const me = useMe();
 
   const back = (
     <Link className={styles.back} to="/compute">
@@ -87,10 +90,22 @@ export function VmDetailPage() {
           <h1 className={styles.title}>{r.name || r.externalId}</h1>
           <p className={styles.subtitle}>{r.externalId}</p>
         </div>
-        <span className={styles.status} role="status">
-          <span className={cn(styles.dot, statusDot[r.status] ?? styles.dotStopped)} aria-hidden="true" />
-          {r.status || "unknown"}
-        </span>
+        <div className={styles.headerActions}>
+          {!r.orphanedAt && canOperate(me.data, { projectId: r.projectId, providerId: r.providerId }) && (
+            <>
+              <Link className={styles.consoleLink} to={`${vmPath(r)}/console/vnc`}>
+                VNC console
+              </Link>
+              <Link className={styles.consoleLink} to={`${vmPath(r)}/console/serial`}>
+                Serial console
+              </Link>
+            </>
+          )}
+          <span className={styles.status} role="status">
+            <span className={cn(styles.dot, statusDot[r.status] ?? styles.dotStopped)} aria-hidden="true" />
+            {r.status || "unknown"}
+          </span>
+        </div>
       </header>
 
       {r.orphanedAt && (

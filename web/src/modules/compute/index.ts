@@ -1,4 +1,6 @@
 // Pages
+// Loaded on demand (noVNC, xterm.js); render inside <Suspense>.
+export { VmConsolePageLazy as VmConsolePage } from "./pages/vm-console/lazy";
 export { VmDetailPage } from "./pages/vm-detail";
 export { VmListPage } from "./pages/vm-list";
 
