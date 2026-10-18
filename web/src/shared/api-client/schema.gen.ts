@@ -398,7 +398,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /** @enum {string} */
-        ResourceKind: "hypervisor" | "vm" | "image" | "network" | "volume";
+        ResourceKind: "hypervisor" | "vm" | "image" | "network" | "volume" | "security_group";
         Resource: {
             providerId: components["schemas"]["EntityId"];
             kind: components["schemas"]["ResourceKind"];

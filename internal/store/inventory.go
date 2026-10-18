@@ -20,12 +20,15 @@ const (
 	KindImage      ResourceKind = "image"
 	KindNetwork    ResourceKind = "network"
 	KindVolume     ResourceKind = "volume"
+	// KindSecurityGroup is listed by drivers implementing
+	// contract.SecurityGroupLister.
+	KindSecurityGroup ResourceKind = "security_group"
 )
 
 // Valid reports whether k is a known kind.
 func (k ResourceKind) Valid() bool {
 	switch k {
-	case KindHypervisor, KindVM, KindImage, KindNetwork, KindVolume:
+	case KindHypervisor, KindVM, KindImage, KindNetwork, KindVolume, KindSecurityGroup:
 		return true
 	}
 	return false
@@ -83,7 +86,8 @@ type existingResource struct {
 // transaction (roadmap §3.6):
 //   - snapshots not newer than the last applied one are rejected;
 //   - resources leased by a workflow are left untouched;
-//   - project ownership is re-derived from project_mappings;
+//   - project ownership is re-derived from project_mappings (exact scope,
+//     then tag and name rules, see ownership);
 //   - a resource is orphaned only after orphanAfter consecutive misses and is
 //     never deleted, so history stays intact;
 //   - every create, change, orphaning and restore is appended to
@@ -135,10 +139,11 @@ func (s *Store) ApplySnapshot(ctx context.Context, snap Snapshot, orphanAfter in
 		return res, ErrStaleSnapshot
 	}
 
-	projects, err := scopeProjects(ctx, tx, snap.ProviderID)
+	scopes, err := scopeProjects(ctx, tx, snap.ProviderID)
 	if err != nil {
 		return res, err
 	}
+	owners := newOwnership(scopes)
 	existing, err := lockExisting(ctx, tx, snap.ProviderID)
 	if err != nil {
 		return res, err
@@ -153,7 +158,7 @@ func (s *Store) ApplySnapshot(ctx context.Context, snap Snapshot, orphanAfter in
 			continue
 		}
 		var project *string
-		if p, ok := projects[r.ExternalScope]; ok && r.ExternalScope != "" {
+		if p, ok := owners.projectOf(r); ok {
 			project = &p
 		}
 		arch := r.Arch

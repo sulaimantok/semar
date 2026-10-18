@@ -306,3 +306,30 @@ func TestSyncRecordsMetricsAndCorrelationID(t *testing.T) {
 		t.Fatalf("failure syncs = %v", got)
 	}
 }
+
+// sgDriver adds security groups to the fake driver.
+type sgDriver struct{ *fake.Driver }
+
+func (sgDriver) ListSecurityGroups(context.Context) ([]contract.SecurityGroup, error) {
+	return []contract.SecurityGroup{{ExternalID: "sg-1", Name: "web", ExternalScope: "proj-a",
+		Rules: []contract.SecurityGroupRule{{Direction: "ingress", Protocol: "tcp", PortMin: 22, PortMax: 22, Remote: "192.0.2.0/24"}}}}, nil
+}
+
+func TestSnapshotIncludesSecurityGroups(t *testing.T) {
+	inv := &recordingInventory{}
+	env := newEnvWithInventory(t, StaticDrivers{"os-1": sgDriver{fake.New(fake.Config{Hypervisors: 1, VMsPerHypervisor: 1})}}, inv)
+	env.ExecuteWorkflow(SyncProviderWorkflow, SyncInput{ProviderID: "os-1"})
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range inv.snapshots[0].Resources {
+		if r.Kind == store.KindSecurityGroup {
+			rules, _ := r.Spec["rules"].([]map[string]any)
+			if r.ExternalScope != "proj-a" || len(rules) != 1 || rules[0]["portMin"] != 22 || rules[0]["remote"] != "192.0.2.0/24" {
+				t.Fatalf("security group resource = %+v", r)
+			}
+			return
+		}
+	}
+	t.Fatal("no security group in the snapshot")
+}

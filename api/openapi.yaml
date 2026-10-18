@@ -583,7 +583,7 @@ components:
   schemas:
     ResourceKind:
       type: string
-      enum: [hypervisor, vm, image, network, volume]
+      enum: [hypervisor, vm, image, network, volume, security_group]
     Resource:
       type: object
       required: [providerId, kind, externalId, name, externalScope, arch, status, spec, observedAt, firstSeenAt]

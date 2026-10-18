@@ -8,9 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -83,11 +85,11 @@ func New(cfg Config) (*Driver, error) {
 // Type implements contract.CloudDriver.
 func (d *Driver) Type() contract.ProviderType { return contract.ProviderProxmox }
 
-// Capabilities implements contract.CloudDriver. Disks are not listed yet,
-// so Volumes is false.
+// Capabilities implements contract.CloudDriver.
 func (d *Driver) Capabilities() contract.Capabilities {
 	return contract.Capabilities{
 		Architectures:  []contract.Arch{contract.ArchAMD64, contract.ArchARM64},
+		Volumes:        true,
 		SnapshotRevert: true,
 		SnapshotMemory: true,
 		Hotplug:        true,
@@ -468,11 +470,106 @@ func (d *Driver) ListNetworks(ctx context.Context) ([]contract.VirtualNetwork, e
 	return out, nil
 }
 
-// ListVolumes implements contract.CloudDriver. VM disks live in each VM's
-// configuration and are not listed yet.
+// diskKey matches the configuration keys of VM disks.
+var diskKey = regexp.MustCompile(`^(scsi|virtio|sata|ide)[0-9]+$|^(efidisk|tpmstate)0$`)
+
+// ListVolumes implements contract.CloudDriver: the disks attached to VMs,
+// read from each VM's configuration (one call per VM, bounded in
+// parallel). CD-ROMs and empty slots are skipped; disks not attached to
+// any VM are not listed.
 func (d *Driver) ListVolumes(ctx context.Context) ([]contract.Volume, error) {
-	if err := ctx.Err(); err != nil {
+	inv, err := d.inventory(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return []contract.Volume{}, nil
+	perVM := make([][]contract.Volume, len(inv.vms))
+	errs := make([]error, len(inv.vms))
+	sem := make(chan struct{}, agentConcurrency)
+	var wg sync.WaitGroup
+	for i, vm := range inv.vms {
+		wg.Add(1)
+		go func(i int, vm resource) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				errs[i] = ctx.Err()
+				return
+			}
+			defer func() { <-sem }()
+			var cfg map[string]any
+			path := "/nodes/" + url.PathEscape(vm.Node) + "/qemu/" + strconv.Itoa(vm.VMID) + "/config"
+			if err := d.get(ctx, path, &cfg); err != nil {
+				errs[i] = fmt.Errorf("vm %d config: %w", vm.VMID, err)
+				return
+			}
+			perVM[i] = disks(cfg, vm)
+		}(i, vm)
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	out := []contract.Volume{}
+	for _, v := range perVM {
+		out = append(out, v...)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ExternalID < out[j].ExternalID })
+	return out, nil
+}
+
+// disks parses the disk entries of a VM configuration, such as
+// "local-lvm:vm-100-disk-0,size=32G".
+func disks(cfg map[string]any, vm resource) []contract.Volume {
+	keys := make([]string, 0, len(cfg))
+	for k := range cfg {
+		if diskKey.MatchString(k) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	var out []contract.Volume
+	for _, k := range keys {
+		v, _ := cfg[k].(string)
+		volid, opts, _ := strings.Cut(v, ",")
+		if volid == "" || volid == "none" || strings.Contains(","+opts+",", ",media=cdrom,") || !strings.Contains(volid, ":") {
+			continue
+		}
+		size := 0
+		for _, o := range strings.Split(opts, ",") {
+			if s, ok := strings.CutPrefix(o, "size="); ok {
+				size = sizeGiB(s)
+			}
+		}
+		out = append(out, contract.Volume{
+			ExternalID: "disk/" + volid, Name: volid + " (" + k + ")", SizeGiB: size,
+			ExternalScope: scope(vm.Pool), AttachedTo: strconv.Itoa(vm.VMID),
+		})
+	}
+	return out
+}
+
+// sizeGiB converts a Proxmox size such as "32G", "512M" or "1T" to GiB,
+// rounding up.
+func sizeGiB(s string) int {
+	if s == "" {
+		return 0
+	}
+	unit := s[len(s)-1]
+	n, err := strconv.ParseFloat(strings.TrimRight(s, "KMGTkmgt"), 64)
+	if err != nil {
+		return 0
+	}
+	switch unit {
+	case 'K', 'k':
+		n /= 1 << 20
+	case 'M', 'm':
+		n /= 1 << 10
+	case 'T', 't':
+		n *= 1 << 10
+	case 'G', 'g':
+	default:
+		n /= 1 << 30 // bytes
+	}
+	return int(math.Ceil(n))
 }

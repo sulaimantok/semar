@@ -235,6 +235,15 @@ func (c *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 		}, func(m map[string]any) string { return m["id"].(string) }, r)})
 	case p == "/network/v2.0/networks":
 		writeJSON(w, http.StatusOK, map[string]any{"networks": []map[string]any{{"id": "net-a", "name": "net-a", "project_id": "proj-0"}}})
+	case p == "/network/v2.0/security-groups":
+		writeJSON(w, http.StatusOK, map[string]any{"security_groups": []map[string]any{{
+			"id": "sg-1", "name": "web", "description": "HTTP from anywhere", "project_id": "proj-0",
+			"security_group_rules": []map[string]any{
+				{"direction": "ingress", "protocol": "tcp", "port_range_min": 443, "port_range_max": 443, "remote_ip_prefix": "0.0.0.0/0", "ethertype": "IPv4"},
+				{"direction": "ingress", "remote_group_id": "sg-1", "ethertype": "IPv4"},
+				{"direction": "egress", "ethertype": "IPv6"},
+			},
+		}}})
 	case p == "/network/v2.0/subnets":
 		writeJSON(w, http.StatusOK, map[string]any{"subnets": []map[string]any{
 			{"id": "sub-1", "network_id": "net-a", "cidr": "192.0.2.0/24"}, {"id": "sub-2", "network_id": "net-a", "cidr": "2001:db8::/64"},
@@ -497,5 +506,19 @@ func TestOpenConsoleAsksNovaServerSide(t *testing.T) {
 	}
 	if body["remote_console"].(map[string]any)["type"] != "serial" {
 		t.Fatalf("request body = %v", body)
+	}
+}
+
+func TestSecurityGroups(t *testing.T) {
+	c := newFakeCloud(t)
+	sgs, err := c.driver(t).ListSecurityGroups(context.Background())
+	if err != nil || len(sgs) != 1 {
+		t.Fatalf("security groups = %+v, %v", sgs, err)
+	}
+	g := sgs[0]
+	if g.Name != "web" || g.ExternalScope != "proj-0" || len(g.Rules) != 3 ||
+		g.Rules[0] != (contract.SecurityGroupRule{Direction: "ingress", Protocol: "tcp", PortMin: 443, PortMax: 443, Remote: "0.0.0.0/0", EtherType: "IPv4"}) ||
+		g.Rules[1].Remote != "group:sg-1" || g.Rules[2].Protocol != "" {
+		t.Fatalf("security group = %+v", g)
 	}
 }

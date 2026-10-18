@@ -322,3 +322,44 @@ func TestListResourcesEnforcesVisibility(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotAppliesTagAndNameRules(t *testing.T) {
+	st := storetest.New(t)
+	ctx := context.Background()
+	mustCreate(t, st, provider("pve-lab", "fp-rules"))
+	for _, p := range []string{"payment", "web"} {
+		if _, err := st.CreateProject(ctx, projectModel(p)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, m := range []model.ProjectMapping{
+		{ProjectID: "payment", ProviderID: "pve-lab", ExternalScope: "tag:payment"},
+		{ProjectID: "web", ProviderID: "pve-lab", ExternalScope: "name:web-*"},
+	} {
+		if _, err := st.CreateProjectMapping(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.CreateProjectMapping(ctx, model.ProjectMapping{ProjectID: "web", ProviderID: "pve-lab", ExternalScope: "name:[x"}); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("malformed pattern accepted: %v", err)
+	}
+	snap := store.Snapshot{ProviderID: "pve-lab", ObservedAt: time.Now(), Resources: []store.ObservedResource{
+		{Kind: store.KindVM, ExternalID: "100", Name: "db-1", Spec: map[string]any{"tags": map[string]string{"payment": ""}}},
+		{Kind: store.KindVM, ExternalID: "101", Name: "web-1"},
+		{Kind: store.KindVM, ExternalID: "102", Name: "misc"},
+	}}
+	if _, err := st.ApplySnapshot(ctx, snap, 3); err != nil {
+		t.Fatal(err)
+	}
+	rs, err := st.ListResources(ctx, store.ResourceFilter{Kind: store.KindVM, Visibility: store.Visibility{All: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, r := range rs {
+		got[r.ExternalID] = r.ProjectID
+	}
+	if got["100"] != "payment" || got["101"] != "web" || got["102"] != "" {
+		t.Fatalf("projects = %v", got)
+	}
+}

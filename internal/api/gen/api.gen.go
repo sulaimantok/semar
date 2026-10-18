@@ -128,11 +128,12 @@ func (e ResourceChangeChange) Valid() bool {
 
 // Defines values for ResourceKind.
 const (
-	Hypervisor ResourceKind = "hypervisor"
-	Image      ResourceKind = "image"
-	Network    ResourceKind = "network"
-	Vm         ResourceKind = "vm"
-	Volume     ResourceKind = "volume"
+	Hypervisor    ResourceKind = "hypervisor"
+	Image         ResourceKind = "image"
+	Network       ResourceKind = "network"
+	SecurityGroup ResourceKind = "security_group"
+	Vm            ResourceKind = "vm"
+	Volume        ResourceKind = "volume"
 )
 
 // Valid indicates whether the value is a known member of the ResourceKind enum.
@@ -143,6 +144,8 @@ func (e ResourceKind) Valid() bool {
 	case Image:
 		return true
 	case Network:
+		return true
+	case SecurityGroup:
 		return true
 	case Vm:
 		return true
