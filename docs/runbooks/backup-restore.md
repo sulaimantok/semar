@@ -34,6 +34,10 @@ Use the owner role (docs/runbooks/database-roles.md) so the dump includes owners
    - **Check connection** succeeds for a real provider (proves the KEK opens the credentials);
    - one sync per provider becomes healthy.
 
+If **Check connection** answers `503 … cannot be decrypted with the configured SEMAR_KEK`, the services were started with a KEK that did not seal the credentials. Start them with the KEK(s) from the time of the backup; nothing in the database needs to change.
+
+This procedure, from `pg_dump` as the owner through restore, grants, `semar-api migrate`, `audit-verify` and a successful connection check on the restored database, has been exercised end to end against PostgreSQL 16.
+
 ## Test the restore
 
 Restore into a scratch database on a schedule (at least before each release) and run the verification above. A backup that has not been restored is not a backup.

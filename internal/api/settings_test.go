@@ -57,6 +57,8 @@ func newAnonymousAPI(t *testing.T, tweak ...func(*Options)) *settingsAPI {
 		Credentials: st,
 		Secrets:     keyring,
 		Inventory:   st,
+		// Consoles of fake providers need no credential.
+		ConsoleTokens: st,
 	}
 	for _, f := range tweak {
 		f(&opts)

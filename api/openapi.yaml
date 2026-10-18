@@ -471,6 +471,45 @@ paths:
                 $ref: "#/components/schemas/ResourceDetail"
         default:
           $ref: "#/components/responses/Problem"
+  /api/v1/resources/{providerId}/vm/{externalId}/console:
+    parameters:
+      - $ref: "#/components/parameters/ProviderId"
+      - name: externalId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 255
+    post:
+      tags: [console]
+      summary: Issue a console token for a VM
+      description: |
+        Requires an Admin or Operator binding that covers the VM. The token
+        is single-use, valid for 30 seconds and bound to the caller's login
+        session and to this VM (roadmap §3.4). Connect to
+        `websocketPath` with the WebSocket subprotocols `binary` and
+        `semar.token.<token>`; the provider's console URL and ticket never
+        reach the browser. Sessions end after `SEMAR_CONSOLE_IDLE_TIMEOUT`
+        without traffic, after `SEMAR_CONSOLE_MAX_DURATION`, or when the
+        login session or the role ends. Close codes: 4001 idle, 4002
+        maximum duration, 4003 access revoked, 4004 provider unavailable.
+      operationId: createConsoleSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsoleRequest"
+      responses:
+        "201":
+          description: Console token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsoleSession"
+        default:
+          $ref: "#/components/responses/Problem"
   /api/v1/capacity:
     get:
       tags: [inventory]
@@ -544,7 +583,7 @@ components:
   schemas:
     ResourceKind:
       type: string
-      enum: [hypervisor, vm, image, network, volume]
+      enum: [hypervisor, vm, image, network, volume, security_group]
     Resource:
       type: object
       required: [providerId, kind, externalId, name, externalScope, arch, status, spec, observedAt, firstSeenAt]
@@ -606,6 +645,30 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ResourceChange"
+    ConsoleKind:
+      type: string
+      enum: [vnc, serial]
+    ConsoleRequest:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          $ref: "#/components/schemas/ConsoleKind"
+    ConsoleSession:
+      type: object
+      required: [token, kind, expiresAt, websocketPath]
+      properties:
+        token:
+          type: string
+          description: Single-use token; send it as the subprotocol `semar.token.<token>`.
+        kind:
+          $ref: "#/components/schemas/ConsoleKind"
+        expiresAt:
+          type: string
+          format: date-time
+        websocketPath:
+          type: string
+          examples: [/api/v1/console/ws]
     ResourceList:
       type: object
       required: [items]

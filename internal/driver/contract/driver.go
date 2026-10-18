@@ -25,6 +25,12 @@ type CloudDriver interface {
 	ListVolumes(ctx context.Context) ([]Volume, error)
 }
 
+// SecurityGroupLister is implemented by drivers whose provider has
+// security groups (OpenStack). Optional so other drivers need no stub.
+type SecurityGroupLister interface {
+	ListSecurityGroups(ctx context.Context) ([]SecurityGroup, error)
+}
+
 // IncrementalVMLister is implemented by drivers that can return only VMs
 // changed after a point in time (e.g. Nova changes-since). Deletions are not
 // guaranteed to be reported; they are detected by full sync (roadmap §3.6).

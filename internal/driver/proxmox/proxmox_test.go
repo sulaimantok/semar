@@ -93,6 +93,16 @@ func (f *fakePVE) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			{"iface": "vmbr1", "type": "OVSBridge", "cidr6": "2001:db8:1::/64"},
 			{"iface": "eno1", "type": "eth"},
 		})
+	case strings.HasSuffix(p, "/config"):
+		switch p {
+		case "/nodes/pve1/qemu/100/config":
+			data(w, map[string]any{"name": "web-1", "scsi0": "local-lvm:vm-100-disk-0,size=32G", "scsi1": "ceph:vm-100-disk-1,iothread=1,size=1T",
+				"ide2": "local:iso/ubuntu.iso,media=cdrom", "efidisk0": "local-lvm:vm-100-disk-2,size=528K", "net0": "virtio=AA:BB,bridge=vmbr0"})
+		case "/nodes/pve1/qemu/101/config":
+			data(w, map[string]any{"virtio0": "local-lvm:vm-101-disk-0,size=512M", "ide0": "none,media=cdrom"})
+		default:
+			data(w, map[string]any{})
+		}
 	case p == "/cluster/sdn/vnets":
 		if f.noSDN {
 			w.WriteHeader(http.StatusNotImplemented)
@@ -273,4 +283,72 @@ func splitEvery(s string, n int) []string {
 		s = s[n:]
 	}
 	return append(out, s)
+}
+
+func TestOpenConsoleUsesTicketsServerSide(t *testing.T) {
+	var form string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		p := strings.TrimPrefix(r.URL.Path, "/api2/json")
+		switch {
+		case p == "/cluster/resources":
+			data(w, []map[string]any{{"type": "qemu", "vmid": 100, "node": "pve1", "template": 0}})
+		case r.Method == http.MethodPost && p == "/nodes/pve1/qemu/100/vncproxy":
+			_ = r.ParseForm()
+			form = r.PostForm.Encode()
+			data(w, map[string]any{"port": "5900", "ticket": "PVEVNC:ABC+/=", "user": "semar@pve!discovery"})
+		case r.Method == http.MethodPost && p == "/nodes/pve1/qemu/100/termproxy":
+			data(w, map[string]any{"port": 5901, "ticket": "PVEVNC:T", "user": "semar@pve!discovery"})
+		default:
+			w.WriteHeader(http.StatusNotImplemented)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	d := newDriver(t, srv.URL)
+	vnc, err := d.OpenConsole(context.Background(), "100", contract.ConsoleVNC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := strings.TrimPrefix(srv.URL, "http://")
+	if vnc.URL != "ws://"+host+"/api2/json/nodes/pve1/qemu/100/vncwebsocket?port=5900&vncticket=PVEVNC%3AABC%2B%2F%3D" ||
+		vnc.VNCPassword != "PVEVNC:ABC+/=" || vnc.Header.Get("Authorization") != token || form != "websocket=1" {
+		t.Fatalf("vnc target = %+v (form %q)", vnc, form)
+	}
+	ser, err := d.OpenConsole(context.Background(), "100", contract.ConsoleSerial)
+	if err != nil || ser.Framing != contract.SerialPVETermproxy || ser.SerialAck != "semar@pve!discovery:PVEVNC:T\n" || !strings.Contains(ser.URL, "port=5901") {
+		t.Fatalf("serial target = %+v, %v", ser, err)
+	}
+	if _, err := d.OpenConsole(context.Background(), "999", contract.ConsoleVNC); !errors.Is(err, contract.ErrNotFound) {
+		t.Fatalf("unknown VM: %v", err)
+	}
+}
+
+func TestVolumesFromVMConfigs(t *testing.T) {
+	srv := httptest.NewServer(&fakePVE{t: t})
+	t.Cleanup(srv.Close)
+	vols, err := newDriver(t, srv.URL).ListVolumes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]contract.Volume{}
+	for _, v := range vols {
+		got[v.ExternalID] = v
+	}
+	if len(vols) != 4 {
+		t.Fatalf("volumes = %+v, want 4 (no CD-ROMs, no empty slots)", vols)
+	}
+	if v := got["disk/local-lvm:vm-100-disk-0"]; v.SizeGiB != 32 || v.AttachedTo != "100" || v.ExternalScope != "pool:payment" {
+		t.Fatalf("scsi0 = %+v", v)
+	}
+	if got["disk/ceph:vm-100-disk-1"].SizeGiB != 1024 || got["disk/local-lvm:vm-100-disk-2"].SizeGiB != 1 || got["disk/local-lvm:vm-101-disk-0"].SizeGiB != 1 {
+		t.Fatalf("sizes = %+v", got)
+	}
+	for in, want := range map[string]int{"32G": 32, "1T": 1024, "512M": 1, "1536M": 2, "10737418240": 10, "": 0, "x": 0} {
+		if g := sizeGiB(in); g != want {
+			t.Errorf("sizeGiB(%q) = %d, want %d", in, g, want)
+		}
+	}
 }

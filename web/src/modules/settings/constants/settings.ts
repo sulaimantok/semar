@@ -10,11 +10,14 @@ export const PROVIDER_TYPES: readonly { value: IProviderType; label: string }[] 
   { value: "fake", label: "Fake (testing)" },
 ];
 
-/** What external scope means for each provider type (project mappings). */
+/**
+ * What external scope means for each provider type (project mappings).
+ * Any provider also accepts VM rules: tag:<tag> and name:<pattern>.
+ */
 export const SCOPE_HINT: Record<IProviderType, string> = {
-  openstack: "OpenStack project ID",
-  proxmox: "pool:<name>",
-  fake: "e.g. proj-a",
+  openstack: "OpenStack project ID, or tag:<tag> / name:<pattern> for VMs",
+  proxmox: "pool:<name>, or tag:<tag> / name:<pattern> for VMs",
+  fake: "e.g. proj-a, or tag:<tag> / name:<pattern> for VMs",
 };
 
 /** Purposes and the scopes the API accepts for each (ADR-0005). */

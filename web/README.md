@@ -10,7 +10,8 @@ React + Vite + TypeScript + Tailwind single-page app for SEMAR.
 | every page | `global-filter` | Site / Project filter above the page, persisted per browser, default All, with an active indicator and reset |
 | `/` | `system` | API status, build, and the Capacity Overview from `compute` (follows the global filter) |
 | `/compute` | `compute` | VM list from the inventory cache with data age, Provider / Site / Project / Arch columns, removable filter chips and cursor paging |
-| `/compute/vms/:providerId/:externalId` | `compute` | VM detail: location and ownership, specification, data age, change history; orphaned VMs flagged |
+| `/compute/vms/:providerId/:externalId` | `compute` | VM detail: location and ownership, specification, data age, change history; orphaned VMs flagged; console links for Admin/Operator |
+| `/compute/vms/:providerId/:externalId/console/:kind` | `compute` | VNC (noVNC) or serial (xterm.js) console through SEMAR's proxy; loaded on demand |
 | `/settings/providers`, `/settings/providers/:id` | `settings` | Providers, their sync status, write-only credentials, removal |
 | `/settings/sites`, `/settings/projects` | `settings` | Sites; projects and their mappings to OpenStack projects / Proxmox pools |
 

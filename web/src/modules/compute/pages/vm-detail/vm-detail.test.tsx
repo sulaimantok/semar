@@ -24,8 +24,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function render(detail: () => Response) {
+function render(detail: () => Response, me: unknown = { username: "v", roles: [{ role: "viewer" }] }) {
   stubApi({
+    "GET /api/v1/auth/me": () => json(200, me),
     "GET /api/v1/resources/pve-lab/vm/100": detail,
     "GET /api/v1/providers": () =>
       json(200, {
@@ -66,5 +67,18 @@ describe("VmDetailPage", () => {
   it("treats a hidden VM like a missing one", async () => {
     render(() => problem(404, "Not Found", "not found"));
     expect(await screen.findByText(/does not exist or is outside the projects you can see/)).toBeTruthy();
+  });
+
+  it("offers consoles to operators of the VM only", async () => {
+    render(() => json(200, { resource, changes: [] }), { username: "op", roles: [{ role: "operator", projectId: "payment" }] });
+    const link = await screen.findByRole("link", { name: "VNC console" });
+    expect(link.getAttribute("href")).toBe("/compute/vms/pve-lab/100/console/vnc");
+    expect(screen.getByRole("link", { name: "Serial console" })).toBeTruthy();
+  });
+
+  it("hides consoles from viewers", async () => {
+    render(() => json(200, { resource, changes: [] }));
+    expect(await screen.findByRole("heading", { name: "web-1" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "VNC console" })).toBeNull();
   });
 });

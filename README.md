@@ -9,7 +9,7 @@
 | Phase | Scope | State |
 |---|---|---|
 | 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment and spikes S1–S3 |
-| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | In progress — done: PostgreSQL store, Settings API (sites, projects, providers, mappings), local auth + RBAC policies + hash-chained audit log, write-only provider credentials with KEK rotation, inventory persistence (conditional writes, orphan detection, change history, sync status), inventory API with project-scoped RBAC, capacity overview, authorization matrix in CI, 1,000-VM sync budget test; web sign-in, global Site/Project filter, Overview with capacity, Compute (VM list with filter chips, VM detail with history) and Settings (providers, sites, projects and mappings, write-only credentials). provider update and connection check (cloud identity, API versions), trusted origins for reverse proxies, read-only OpenStack and Proxmox drivers (tested against API fakes; lab verification pending). Operability: Prometheus metrics on a separate listener, correlation IDs to the audit log and to OpenStack, runbooks. Next: lab contract tests, console proxy |
+| 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | Feature-complete; verification against OpenStack and Proxmox labs pending. Done: PostgreSQL store, Settings API and UI, local auth + RBAC + hash-chained audit log (streamed to a webhook), write-only credentials with KEK rotation, inventory sync with orphan detection and history, project mappings (scope, tag and name rules), read-only OpenStack and Proxmox drivers, capacity overview, global Site/Project filter, VM list and detail, VNC and serial consoles, provider update and connection checks, metrics, runbooks, [security review](docs/security/v0.1.0-review.md). Next: lab verification, then `v0.1.0` |
 | 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
 
 ## What's Here
@@ -32,6 +32,8 @@
 | Lite profile | `deploy/compose/` | PostgreSQL + Temporal + UI + SEMAR (development only) |
 | ADRs & spikes | `docs/adr/`, `docs/spikes/` | ADR-0001 … ADR-0007, spike S4 |
 | Runbooks | `docs/runbooks/` | Database roles, key rotation, break-glass, backup and restore |
+| Console proxy | `internal/console`, `internal/api/console.go` | WebSocket bridge to provider consoles: RFB auth relay, Proxmox termproxy framing, limits, audit |
+| Audit streaming | `internal/auditsink` | Signed, ordered, at-least-once delivery of the audit log to a webhook |
 | Metrics | `internal/metrics` | Prometheus text exposition for API and worker (no client library) |
 
 ## Development
@@ -94,9 +96,11 @@ The full contract is [`api/openapi.yaml`](api/openapi.yaml).
 | `POST` sites, projects, mappings, providers; `PATCH`/`DELETE /providers/{id}` | admin |
 | `POST /api/v1/providers/{id}/validate` | admin; connection check through the provider's driver |
 | `GET/PUT/DELETE /api/v1/providers/{id}/credentials` | admin (secrets are write-only) |
-| `GET /api/v1/resources?kind=vm\|hypervisor\|image\|network\|volume` (optional `providerId`, `siteId`, `projectId`, `arch`) | signed in; scoped to the caller's role bindings (see below) |
+| `GET /api/v1/resources?kind=vm\|hypervisor\|image\|network\|volume\|security_group` (optional `providerId`, `siteId`, `projectId`, `arch`) | signed in; scoped to the caller's role bindings (see below) |
 | `GET /api/v1/resources/{providerId}/{kind}/{externalId}` | signed in; same scoping, 404 outside it; includes orphaned resources and the latest 50 changes |
 | `GET /api/v1/capacity` (optional `providerId`, `siteId`, `projectId`) | signed in; same scoping as `/resources`; physical capacity for global bindings only |
+| `POST /api/v1/resources/{providerId}/vm/{externalId}/console` | Admin or Operator binding covering the VM; single-use console token |
+| `GET /api/v1/console/ws` (WebSocket) | the token from above, sent as subprotocol `semar.token.<token>` |
 | `GET /api/v1/providers/{id}/sync-status` | signed in; providers in the caller's scope; `lastError` for global admins and operators only |
 
 ### Authentication and audit
@@ -136,6 +140,10 @@ A lost local password is reset with `semar-api reset-password <username>` (new p
 | `SEMAR_KEK` | — (required) | Current KEK, 32 bytes base64 (`openssl rand -base64 32`); keep it outside the database host in production |
 | `SEMAR_KEK_PREVIOUS` | — | Old KEKs kept for decryption during rotation: `k0=<base64>,…` |
 | `SEMAR_TRUSTED_ORIGINS` | — | Comma-separated public origins of the UI (`https://semar.example.com`) when a reverse proxy rewrites `Host`; replaces the Host comparison of the CSRF check |
+| `SEMAR_CONSOLE_IDLE_TIMEOUT` | `15m` | Close a console after this long without traffic |
+| `SEMAR_CONSOLE_MAX_DURATION` | `4h` | Maximum length of a console session |
+| `SEMAR_AUDIT_WEBHOOK_URL` | — | Receives a copy of every audit event (JSON batches, at least once, in order) |
+| `SEMAR_AUDIT_WEBHOOK_SECRET` | — | Signs webhook deliveries (`X-SEMAR-Signature: sha256=<HMAC>`); at least 32 characters |
 | `SEMAR_HTTP_ADDR` | `:8080` | Listen address |
 | `SEMAR_METRICS_ADDR` | — | Listen address of a separate `/metrics` listener (e.g. `127.0.0.1:9090`); off when empty |
 | `SEMAR_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
@@ -164,7 +172,7 @@ The worker serves one site (`SEMAR_SITE_ID`; providers without a site belong to 
 
 - snapshots older than the last applied one are discarded;
 - resources leased by an in-flight operation are left untouched;
-- project ownership is re-derived from project mappings;
+- project ownership is re-derived from project mappings: the provider scope (OpenStack project ID, `pool:<name>`) first, then VM rules `tag:<tag>` and `name:<pattern>` (most specific first);
 - a resource missing for `SEMAR_ORPHAN_AFTER` consecutive syncs is marked orphaned (never deleted) and restored if it reappears;
 - every create, change, orphaning and restore is appended to `resource_changes`.
 
@@ -181,6 +189,17 @@ OpenStack and Proxmox providers need a **discovery** credential (purpose `discov
 Self-signed Proxmox clusters are trusted by pinning the certificate's SHA-256 fingerprint (`tlsFingerprint` on the provider, from `pvenode cert info`); the pin is checked on every connection, including resumed TLS sessions.
 
 The drivers are verified against in-process fakes of the provider APIs (`go test ./internal/driver/...`); verification against real OpenStack and Proxmox labs is still pending.
+
+### Consoles
+
+**VNC console** and **Serial console** on a VM's page open a console through SEMAR for users with an Admin or Operator binding covering the VM. The browser asks for a single-use token (30 seconds, bound to the user, the login session and the VM) and connects to `/api/v1/console/ws`; SEMAR fetches the provider's console ticket server-side and relays the session, so provider URLs and tickets never reach the browser. For Proxmox, SEMAR also answers the VNC password (the ticket) itself.
+
+| Provider | VNC | Serial | Credential used |
+|---|---|---|---|
+| OpenStack | Nova `remote-consoles` (noVNC proxy) | Nova serial proxy | `mutate` credential for `project:<id>` of the VM, else discovery |
+| Proxmox VE | `vncproxy` + `vncwebsocket` | `termproxy` (needs a serial port on the VM) | `mutate` credential for the VM's `pool:<name>`, else discovery; needs `VM.Console` |
+
+Sessions close after `SEMAR_CONSOLE_IDLE_TIMEOUT` without traffic, after `SEMAR_CONSOLE_MAX_DURATION`, or within a minute of logout or losing the role. Each user may have 5 consoles open at a time. Opening and closing are audited. Fake providers serve a generated test screen and an echo terminal.
 
 ### Changing a provider
 
@@ -203,7 +222,9 @@ A provider is updated in place (`PATCH /api/v1/providers/{id}`, or **Edit** on i
 
 **Correlation.** Every API request has an `X-Request-ID` (accepted from the client when well formed, otherwise generated). It is returned in the response and in problem bodies, written to access logs and to every audit event, and sent to OpenStack as `X-OpenStack-Request-ID`. Syncs use the Temporal run ID the same way, so a sync can be followed from Temporal into the provider's logs.
 
-**Runbooks** live in [docs/runbooks/](docs/runbooks/).
+**Audit streaming.** With `SEMAR_AUDIT_WEBHOOK_URL` set, semar-api posts every audit event to that URL in order, at least once, in JSON batches signed with `SEMAR_AUDIT_WEBHOOK_SECRET`. Each event carries its hash and the previous event's hash, so the receiver can verify the chain and drop duplicates by ID. Only one replica streams at a time; the position is kept in the database.
+
+**Runbooks** live in [docs/runbooks/](docs/runbooks/); the Phase 1 security review is in [docs/security/v0.1.0-review.md](docs/security/v0.1.0-review.md).
 
 ## Adding a Provider Driver
 

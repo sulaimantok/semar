@@ -15,6 +15,8 @@ export interface ICapacityQuery {
 export type IResourceDetail = components["schemas"]["ResourceDetail"];
 export type IResourceChange = components["schemas"]["ResourceChange"];
 export type IArch = components["schemas"]["Resource"]["arch"];
+export type IConsoleKind = components["schemas"]["ConsoleKind"];
+export type IConsoleSession = components["schemas"]["ConsoleSession"];
 
 /** Narrowing applied to the VM list; the API applies RBAC on top. */
 export interface IVmFilter {
@@ -59,5 +61,15 @@ export async function fetchVm(providerId: string, externalId: string): Promise<I
   });
   if (data) return data;
   if (response.status === 404) return null;
+  throw new ApiError(response.status, isProblem(error) ? error : undefined);
+}
+
+/** Issues a single-use console token (valid for 30 seconds). */
+export async function createConsoleSession(providerId: string, externalId: string, kind: IConsoleKind): Promise<IConsoleSession> {
+  const { data, error, response } = await apiClient.POST("/api/v1/resources/{providerId}/vm/{externalId}/console", {
+    params: { path: { providerId, externalId } },
+    body: { kind },
+  });
+  if (data) return data;
   throw new ApiError(response.status, isProblem(error) ? error : undefined);
 }

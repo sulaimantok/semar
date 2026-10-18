@@ -73,6 +73,10 @@ func TestLoadAPIRejectsInvalid(t *testing.T) {
 		{"SEMAR_TRUSTED_ORIGINS": "https://semar.example.com/app"},
 		{"SEMAR_TRUSTED_ORIGINS": "ftp://semar.example.com"},
 		{"SEMAR_TRUSTED_ORIGINS": " , "},
+		{"SEMAR_AUDIT_WEBHOOK_URL": "siem.example.com"},
+		{"SEMAR_AUDIT_WEBHOOK_URL": "https://siem.example.com/semar", "SEMAR_AUDIT_WEBHOOK_SECRET": "short"},
+		{"SEMAR_CONSOLE_IDLE_TIMEOUT": "1s"},
+		{"SEMAR_CONSOLE_MAX_DURATION": "48h"},
 	} {
 		m["SEMAR_DATABASE_URL"] = testDBURL
 		if _, ok := m["SEMAR_KEK"]; !ok {

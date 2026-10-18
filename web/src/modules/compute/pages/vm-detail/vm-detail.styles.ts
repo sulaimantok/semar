@@ -5,6 +5,9 @@ export const vmDetailStyles = {
   titleGroup: "flex flex-col gap-1",
   title: "text-2xl font-semibold tracking-tight",
   subtitle: "font-mono text-xs text-muted",
+  headerActions: "flex flex-wrap items-center gap-2",
+  consoleLink:
+    "rounded-md border border-border bg-panel px-3 py-1.5 text-sm hover:bg-surface focus-visible:outline-2 focus-visible:outline-accent",
   status: "inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 text-sm font-medium",
   dot: "size-2 rounded-full",
   dotRunning: "bg-ok",

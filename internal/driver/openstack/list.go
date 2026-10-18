@@ -521,3 +521,59 @@ func (d *Driver) ListVolumes(ctx context.Context) ([]contract.Volume, error) {
 	}
 	return out, err
 }
+
+// --- Security groups ---
+
+var _ contract.SecurityGroupLister = (*Driver)(nil)
+
+// ListSecurityGroups implements contract.SecurityGroupLister.
+func (d *Driver) ListSecurityGroups(ctx context.Context) ([]contract.SecurityGroup, error) {
+	if ok, err := d.hasService(ctx, "network"); err != nil || !ok {
+		return []contract.SecurityGroup{}, err
+	}
+	out := []contract.SecurityGroup{}
+	err := page(ctx, func(ctx context.Context, marker string) ([]string, error) {
+		var resp struct {
+			SecurityGroups []struct {
+				ID          string `json:"id"`
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				ProjectID   string `json:"project_id"`
+				Rules       []struct {
+					Direction     string `json:"direction"`
+					Protocol      string `json:"protocol"`
+					PortMin       *int   `json:"port_range_min"`
+					PortMax       *int   `json:"port_range_max"`
+					RemoteIP      string `json:"remote_ip_prefix"`
+					RemoteGroupID string `json:"remote_group_id"`
+					EtherType     string `json:"ethertype"`
+				} `json:"security_group_rules"`
+			} `json:"security_groups"`
+		}
+		if err := d.call(ctx, "network", "/v2.0/security-groups"+query(nil, marker), "", &resp); err != nil {
+			return nil, err
+		}
+		ids := make([]string, len(resp.SecurityGroups))
+		for i, g := range resp.SecurityGroups {
+			ids[i] = g.ID
+			sg := contract.SecurityGroup{ExternalID: g.ID, Name: g.Name, Description: g.Description, ExternalScope: g.ProjectID,
+				Rules: make([]contract.SecurityGroupRule, len(g.Rules))}
+			for j, r := range g.Rules {
+				rule := contract.SecurityGroupRule{Direction: r.Direction, Protocol: r.Protocol, EtherType: r.EtherType, Remote: r.RemoteIP}
+				if r.RemoteGroupID != "" {
+					rule.Remote = "group:" + r.RemoteGroupID
+				}
+				if r.PortMin != nil {
+					rule.PortMin = *r.PortMin
+				}
+				if r.PortMax != nil {
+					rule.PortMax = *r.PortMax
+				}
+				sg.Rules[j] = rule
+			}
+			out = append(out, sg)
+		}
+		return ids, nil
+	})
+	return out, err
+}

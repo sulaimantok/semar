@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -58,6 +59,9 @@ type Request struct {
 	Header http.Header
 	// Body is marshalled as JSON when non-nil.
 	Body any
+	// Form is sent URL-encoded when non-nil (and Body is nil), as the
+	// Proxmox API expects for POST.
+	Form url.Values
 	// AllowMultipleChoices accepts HTTP 300, which OpenStack services use
 	// for their version documents.
 	AllowMultipleChoices bool
@@ -68,12 +72,16 @@ type Request struct {
 // transport failures wrap contract.ErrUnavailable.
 func Do(ctx context.Context, c *http.Client, r Request, out any) (http.Header, error) {
 	var body io.Reader
-	if r.Body != nil {
+	contentType := ""
+	switch {
+	case r.Body != nil:
 		b, err := json.Marshal(r.Body)
 		if err != nil {
 			return nil, err
 		}
-		body = bytes.NewReader(b)
+		body, contentType = bytes.NewReader(b), "application/json"
+	case r.Form != nil:
+		body, contentType = strings.NewReader(r.Form.Encode()), "application/x-www-form-urlencoded"
 	}
 	req, err := http.NewRequestWithContext(ctx, r.Method, r.URL, body)
 	if err != nil {
@@ -85,8 +93,8 @@ func Do(ctx context.Context, c *http.Client, r Request, out any) (http.Header, e
 		}
 	}
 	req.Header.Set("Accept", "application/json")
-	if r.Body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := c.Do(req)
 	if err != nil {
@@ -159,5 +167,14 @@ func Client(timeout time.Duration, tlsFingerprint string) (*http.Client, error) 
 			return nil
 		}
 	}
-	return &http.Client{Timeout: timeout, Transport: tr}, nil
+	return &http.Client{Timeout: timeout, Transport: tr, CheckRedirect: noRedirects}, nil
 }
+
+// ErrRedirect is returned when a provider answers with a redirect.
+var ErrRedirect = errors.New("provider answered with a redirect, which SEMAR does not follow")
+
+// noRedirects refuses redirects. Go forwards custom headers such as
+// OpenStack's X-Auth-Token to whatever host a redirect names, so following
+// one could hand a token to another host. Provider APIs do not redirect
+// API calls; a redirect is a misconfiguration or an attack.
+func noRedirects(*http.Request, []*http.Request) error { return ErrRedirect }

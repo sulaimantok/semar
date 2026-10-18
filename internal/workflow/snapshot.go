@@ -15,6 +15,7 @@ type inventory struct {
 	images      []contract.MachineImage
 	networks    []contract.VirtualNetwork
 	volumes     []contract.Volume
+	secGroups   []contract.SecurityGroup
 }
 
 // collect lists everything; any error aborts so that only complete
@@ -37,12 +38,17 @@ func collect(ctx context.Context, d contract.CloudDriver) (inventory, error) {
 	if inv.volumes, err = d.ListVolumes(ctx); err != nil {
 		return inv, classify("list volumes", err)
 	}
+	if sg, ok := d.(contract.SecurityGroupLister); ok {
+		if inv.secGroups, err = sg.ListSecurityGroups(ctx); err != nil {
+			return inv, classify("list security groups", err)
+		}
+	}
 	return inv, nil
 }
 
 // snapshot converts the driver model into store resources.
 func (inv inventory) snapshot(providerID string, observedAt time.Time) store.Snapshot {
-	n := len(inv.hypervisors) + len(inv.vms) + len(inv.images) + len(inv.networks) + len(inv.volumes)
+	n := len(inv.hypervisors) + len(inv.vms) + len(inv.images) + len(inv.networks) + len(inv.volumes) + len(inv.secGroups)
 	rs := make([]store.ObservedResource, 0, n)
 	for _, h := range inv.hypervisors {
 		rs = append(rs, store.ObservedResource{
@@ -91,6 +97,28 @@ func (inv inventory) snapshot(providerID string, observedAt time.Time) store.Sna
 		}
 		rs = append(rs, store.ObservedResource{
 			Kind: store.KindVolume, ExternalID: v.ExternalID, Name: v.Name, ExternalScope: v.ExternalScope, Spec: spec,
+		})
+	}
+	for _, g := range inv.secGroups {
+		rules := make([]map[string]any, len(g.Rules))
+		for i, r := range g.Rules {
+			rule := map[string]any{"direction": r.Direction}
+			for k, v := range map[string]string{"protocol": r.Protocol, "remote": r.Remote, "etherType": r.EtherType} {
+				if v != "" {
+					rule[k] = v
+				}
+			}
+			if r.PortMin != 0 || r.PortMax != 0 {
+				rule["portMin"], rule["portMax"] = r.PortMin, r.PortMax
+			}
+			rules[i] = rule
+		}
+		spec := map[string]any{"rules": rules}
+		if g.Description != "" {
+			spec["description"] = g.Description
+		}
+		rs = append(rs, store.ObservedResource{
+			Kind: store.KindSecurityGroup, ExternalID: g.ExternalID, Name: g.Name, ExternalScope: g.ExternalScope, Spec: spec,
 		})
 	}
 	return store.Snapshot{ProviderID: providerID, ObservedAt: observedAt, Resources: rs}

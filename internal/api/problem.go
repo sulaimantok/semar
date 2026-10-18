@@ -26,6 +26,13 @@ func newProblem(ctx context.Context, instance string, status int, detail string)
 	return p
 }
 
+// writeProblemBody writes an already built problem.
+func writeProblemBody(w http.ResponseWriter, status int, p gen.Problem) {
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(p)
+}
+
 // writeProblem writes a problem response outside the generated handlers
 // (middleware, unknown routes, request/response errors).
 func writeProblem(w http.ResponseWriter, r *http.Request, status int, detail string) {

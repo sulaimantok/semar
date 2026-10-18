@@ -166,3 +166,25 @@ type Volume struct {
 	// AttachedTo references VirtualMachine.ExternalID; empty if detached.
 	AttachedTo string `json:"attachedTo,omitempty"`
 }
+
+// SecurityGroupRule is one rule of a security group.
+type SecurityGroupRule struct {
+	// Direction is "ingress" or "egress".
+	Direction string `json:"direction"`
+	// Protocol is "tcp", "udp", "icmp", … or "" for any.
+	Protocol string `json:"protocol,omitempty"`
+	PortMin  int    `json:"portMin,omitempty"`
+	PortMax  int    `json:"portMax,omitempty"`
+	// Remote is a CIDR, a remote group ID ("group:<id>"), or "" for any.
+	Remote    string `json:"remote,omitempty"`
+	EtherType string `json:"etherType,omitempty"`
+}
+
+// SecurityGroup is a Neutron security group.
+type SecurityGroup struct {
+	ExternalID    string              `json:"externalId"`
+	Name          string              `json:"name"`
+	Description   string              `json:"description,omitempty"`
+	ExternalScope string              `json:"externalScope,omitempty"`
+	Rules         []SecurityGroupRule `json:"rules"`
+}

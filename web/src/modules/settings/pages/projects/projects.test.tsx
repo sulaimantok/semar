@@ -37,7 +37,7 @@ describe("ProjectsPage", () => {
     expect(within(list).getByText("PVE Lab")).toBeTruthy();
 
     const form = screen.getByRole("form", { name: "Add mapping to payment" });
-    expect(within(form).getByText("pool:<name>")).toBeTruthy();
+    expect(within(form).getByText(/^pool:<name>, or tag:<tag>/)).toBeTruthy();
     fireEvent.change(within(form).getByLabelText(/External scope/), { target: { value: "pool:billing" } });
     fireEvent.click(within(form).getByRole("button", { name: "Add mapping" }));
 

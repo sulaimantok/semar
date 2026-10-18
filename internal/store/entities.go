@@ -215,6 +215,9 @@ func (s *Store) DeleteProvider(ctx context.Context, id string) error {
 // CreateProjectMapping maps an external scope to a project. Mapping a scope
 // that is already mapped fails with ErrConflict.
 func (s *Store) CreateProjectMapping(ctx context.Context, m model.ProjectMapping) (model.ProjectMapping, error) {
+	if err := ValidateMappingScope(m.ExternalScope); err != nil {
+		return model.ProjectMapping{}, err
+	}
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO project_mappings (project_id, provider_id, external_scope)
 		VALUES ($1, $2, $3) RETURNING id, created_at`,

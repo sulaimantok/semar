@@ -48,6 +48,10 @@ func (s *server) validateProvider(ctx context.Context, id string) (model.Provide
 	switch {
 	case errors.Is(err, registry.ErrNotImplemented):
 		return model.Provider{}, &apiError{status: http.StatusNotImplemented, detail: "no driver for provider type " + string(p.Type) + " yet"}
+	case errors.Is(err, registry.ErrCredentialUnreadable):
+		s.opts.Logger.ErrorContext(ctx, "provider credential cannot be decrypted", slog.String("provider", id), slog.Any("error", err))
+		return model.Provider{}, &apiError{status: http.StatusServiceUnavailable,
+			detail: "the stored credential cannot be decrypted with the configured SEMAR_KEK; see the key rotation runbook"}
 	case errors.Is(err, registry.ErrNoCredential):
 		return model.Provider{}, &apiError{status: http.StatusUnprocessableEntity, detail: "store a discovery credential for this provider first"}
 	case errors.Is(err, contract.ErrUnauthorized):

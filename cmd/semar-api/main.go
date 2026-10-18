@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/sulaimantok/semar/internal/api"
+	"github.com/sulaimantok/semar/internal/auditsink"
 	"github.com/sulaimantok/semar/internal/auth"
 	"github.com/sulaimantok/semar/internal/config"
 	"github.com/sulaimantok/semar/internal/metrics"
@@ -104,30 +105,41 @@ func run() error {
 		log.Info("serving metrics", "addr", cfg.MetricsAddr)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if cfg.AuditWebhookURL != "" {
+		if cfg.AuditWebhookSecret == "" {
+			log.Warn("audit webhook deliveries are not signed; set SEMAR_AUDIT_WEBHOOK_SECRET")
+		}
+		go (&auditsink.Streamer{Store: st, URL: cfg.AuditWebhookURL, Secret: cfg.AuditWebhookSecret, Logger: log}).Run(ctx)
+		log.Info("streaming the audit log", "sink", "webhook")
+	}
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: api.NewHandler(api.Options{
 			Logger: log,
 			// "schema" keeps an API started with migrations off out of
 			// rotation until `semar-api migrate` has run.
-			Checks:         map[string]api.ReadinessCheck{"database": st.Ping, "schema": st.CheckSchema},
-			Settings:       st,
-			Auth:           st,
-			Audit:          st,
-			SessionTTL:     cfg.SessionTTL,
-			CookieSecure:   cfg.CookieSecure,
-			Credentials:    st,
-			Secrets:        keyring,
-			Inventory:      st,
-			TrustedOrigins: cfg.TrustedOrigins,
-			Metrics:        reg,
+			Checks:             map[string]api.ReadinessCheck{"database": st.Ping, "schema": st.CheckSchema},
+			Settings:           st,
+			Auth:               st,
+			Audit:              st,
+			SessionTTL:         cfg.SessionTTL,
+			CookieSecure:       cfg.CookieSecure,
+			Credentials:        st,
+			Secrets:            keyring,
+			Inventory:          st,
+			TrustedOrigins:     cfg.TrustedOrigins,
+			Metrics:            reg,
+			ConsoleTokens:      st,
+			ConsoleIdleTimeout: cfg.ConsoleIdleTimeout,
+			ConsoleMaxDuration: cfg.ConsoleMaxDuration,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errc := make(chan error, 1)
 	go func() {

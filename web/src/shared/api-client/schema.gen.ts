@@ -319,6 +319,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/resources/{providerId}/vm/{externalId}/console": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+                externalId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a console token for a VM
+         * @description Requires an Admin or Operator binding that covers the VM. The token
+         *     is single-use, valid for 30 seconds and bound to the caller's login
+         *     session and to this VM (roadmap §3.4). Connect to
+         *     `websocketPath` with the WebSocket subprotocols `binary` and
+         *     `semar.token.<token>`; the provider's console URL and ticket never
+         *     reach the browser. Sessions end after `SEMAR_CONSOLE_IDLE_TIMEOUT`
+         *     without traffic, after `SEMAR_CONSOLE_MAX_DURATION`, or when the
+         *     login session or the role ends. Close codes: 4001 idle, 4002
+         *     maximum duration, 4003 access revoked, 4004 provider unavailable.
+         */
+        post: operations["createConsoleSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/capacity": {
         parameters: {
             query?: never;
@@ -367,7 +398,7 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /** @enum {string} */
-        ResourceKind: "hypervisor" | "vm" | "image" | "network" | "volume";
+        ResourceKind: "hypervisor" | "vm" | "image" | "network" | "volume" | "security_group";
         Resource: {
             providerId: components["schemas"]["EntityId"];
             kind: components["schemas"]["ResourceKind"];
@@ -405,6 +436,20 @@ export interface components {
         ResourceDetail: {
             resource: components["schemas"]["Resource"];
             changes: components["schemas"]["ResourceChange"][];
+        };
+        /** @enum {string} */
+        ConsoleKind: "vnc" | "serial";
+        ConsoleRequest: {
+            kind: components["schemas"]["ConsoleKind"];
+        };
+        ConsoleSession: {
+            /** @description Single-use token; send it as the subprotocol `semar.token.<token>`. */
+            token: string;
+            kind: components["schemas"]["ConsoleKind"];
+            /** Format: date-time */
+            expiresAt: string;
+            /** @example /api/v1/console/ws */
+            websocketPath: string;
         };
         ResourceList: {
             items: components["schemas"]["Resource"][];
@@ -1217,6 +1262,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResourceDetail"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    createConsoleSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                providerId: components["parameters"]["ProviderId"];
+                externalId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsoleRequest"];
+            };
+        };
+        responses: {
+            /** @description Console token */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConsoleSession"];
                 };
             };
             default: components["responses"]["Problem"];
