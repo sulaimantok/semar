@@ -5,18 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
+var siteIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
 // Worker is the configuration of semar-worker.
 type Worker struct {
 	TemporalAddress   string
 	TemporalNamespace string
-	SiteID            string
-	LogLevel          slog.Level
-	SyncInterval      time.Duration
+	// SiteIDs are the sites this worker serves (SEMAR_SITE_ID, comma
+	// separated). One worker per site is the norm; several suit Lite and
+	// small labs.
+	SiteIDs      []string
+	LogLevel     slog.Level
+	SyncInterval time.Duration
 	// PayloadKeyID identifies PayloadKeys[PayloadKeyID], used for encryption.
 	PayloadKeyID string
 	// PayloadKeys holds the current key and any previous keys still needed to
@@ -46,7 +52,7 @@ func LoadWorker(getenv func(string) string) (Worker, error) {
 	cfg := Worker{
 		TemporalAddress:   "localhost:7233",
 		TemporalNamespace: "semar",
-		SiteID:            "default",
+		SiteIDs:           []string{"default"},
 		LogLevel:          slog.LevelInfo,
 		SyncInterval:      60 * time.Second,
 		PayloadKeyID:      "k1",
@@ -74,7 +80,24 @@ func LoadWorker(getenv func(string) string) (Worker, error) {
 	}
 	setString(getenv, "SEMAR_TEMPORAL_ADDRESS", &cfg.TemporalAddress)
 	setString(getenv, "SEMAR_TEMPORAL_NAMESPACE", &cfg.TemporalNamespace)
-	setString(getenv, "SEMAR_SITE_ID", &cfg.SiteID)
+	if v := getenv("SEMAR_SITE_ID"); v != "" {
+		cfg.SiteIDs = nil
+		seen := map[string]bool{}
+		for _, s := range strings.Split(v, ",") {
+			s = strings.TrimSpace(s)
+			if s == "" || seen[s] {
+				continue
+			}
+			if !siteIDPattern.MatchString(s) {
+				return Worker{}, fmt.Errorf("SEMAR_SITE_ID: %q is not a site ID", s)
+			}
+			seen[s] = true
+			cfg.SiteIDs = append(cfg.SiteIDs, s)
+		}
+		if len(cfg.SiteIDs) == 0 {
+			return Worker{}, errors.New("SEMAR_SITE_ID: no site given")
+		}
+	}
 	setString(getenv, "SEMAR_PAYLOAD_KEY_ID", &cfg.PayloadKeyID)
 	setString(getenv, "SEMAR_METRICS_ADDR", &cfg.MetricsAddr)
 

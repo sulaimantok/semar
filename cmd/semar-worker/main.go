@@ -99,27 +99,33 @@ func run() error {
 		log.Info("serving metrics", "addr", cfg.MetricsAddr)
 	}
 
-	taskQueue := workflow.TaskQueueForSite(cfg.SiteID)
-	w := worker.New(c, taskQueue, worker.Options{})
-	w.RegisterWorkflow(workflow.SyncProviderWorkflow)
-	w.RegisterActivity(&workflow.Activities{
+	// One Temporal worker per served site, each on its site's task queue.
+	acts := &workflow.Activities{
 		Drivers:     drivers,
 		Inventory:   st,
 		OrphanAfter: cfg.OrphanAfter,
 		Metrics:     syncMetrics,
-	})
-	if err := w.Start(); err != nil {
-		return fmt.Errorf("start worker: %w", err)
 	}
-	defer w.Stop()
+	queues := make([]string, 0, len(cfg.SiteIDs))
+	for _, site := range cfg.SiteIDs {
+		q := workflow.TaskQueueForSite(site)
+		w := worker.New(c, q, worker.Options{})
+		w.RegisterWorkflow(workflow.SyncProviderWorkflow)
+		w.RegisterActivity(acts)
+		if err := w.Start(); err != nil {
+			return fmt.Errorf("start worker for site %s: %w", site, err)
+		}
+		defer w.Stop()
+		queues = append(queues, q)
+	}
 
 	info := version.Get()
-	log.Info("starting semar-worker", "task_queue", taskQueue, "namespace", cfg.TemporalNamespace,
+	log.Info("starting semar-worker", "sites", cfg.SiteIDs, "task_queues", queues, "namespace", cfg.TemporalNamespace,
 		"version", info.Version, "commit", info.Commit)
 
 	// Rewrite existing schedules on start (re-encrypts them after a payload
 	// key rotation), then only add missing and drop removed ones.
-	reconcileSchedules(ctx, log, st, c, cfg, taskQueue, true)
+	reconcileSchedules(ctx, log, st, c, cfg, true)
 	ticker := time.NewTicker(cfg.ReconcileInterval)
 	defer ticker.Stop()
 	for {
@@ -128,14 +134,14 @@ func run() error {
 			log.Info("shutting down")
 			return nil
 		case <-ticker.C:
-			reconcileSchedules(ctx, log, st, c, cfg, taskQueue, false)
+			reconcileSchedules(ctx, log, st, c, cfg, false)
 		}
 	}
 }
 
 // reconcileSchedules logs failures instead of exiting: the database or
 // Temporal may be briefly unavailable (e.g. while semar-api migrates).
-func reconcileSchedules(ctx context.Context, log *slog.Logger, st *store.Store, c client.Client, cfg config.Worker, taskQueue string, rewrite bool) {
+func reconcileSchedules(ctx context.Context, log *slog.Logger, st *store.Store, c client.Client, cfg config.Worker, rewrite bool) {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	providers, err := st.ListProviders(ctx)
@@ -143,18 +149,23 @@ func reconcileSchedules(ctx context.Context, log *slog.Logger, st *store.Store, 
 		log.Error("list providers for schedule reconciliation", "error", err)
 		return
 	}
-	var own, active []string
+	served := make(map[string]bool, len(cfg.SiteIDs))
+	for _, s := range cfg.SiteIDs {
+		served[s] = true
+	}
+	own := map[string]string{}
+	var active []string
 	for _, p := range providers {
 		active = append(active, p.ID)
 		site := p.SiteID
 		if site == "" {
 			site = "default"
 		}
-		if site == cfg.SiteID {
-			own = append(own, p.ID)
+		if served[site] {
+			own[p.ID] = workflow.TaskQueueForSite(site)
 		}
 	}
-	res, err := workflow.ReconcileSchedules(ctx, c, taskQueue, cfg.SyncInterval, own, active, rewrite)
+	res, err := workflow.ReconcileSchedules(ctx, c, cfg.SyncInterval, own, active, rewrite)
 	if err != nil {
 		log.Error("reconcile sync schedules", "error", err)
 	}

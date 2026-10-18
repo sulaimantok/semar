@@ -2,6 +2,12 @@
 # All ports are bound to 127.0.0.1. Copy .env.example to .env first.
 name: semar-lite
 
+# Extra CA certificates (PEM files) trusted by semar-api and semar-worker
+# for provider endpoints with a private CA, e.g. a cert-manager
+# "selfsigned-ca". Go adds every file in SSL_CERT_DIR to the system roots.
+x-extra-ca: &extra-ca
+  - ${SEMAR_EXTRA_CA_DIR:-./extra-ca}:/etc/semar/ca:ro
+
 x-temporal-env: &temporal-env
   POSTGRES_SEEDS: postgres
   POSTGRES_USER: ${POSTGRES_USER:-semar}
@@ -77,7 +83,9 @@ services:
       context: ../..
     image: semar:dev
     entrypoint: ["/usr/local/bin/semar-worker"]
+    volumes: *extra-ca
     environment:
+      SSL_CERT_DIR: /etc/ssl/certs:/etc/semar/ca
       SEMAR_TEMPORAL_ADDRESS: temporal:7233
       SEMAR_TEMPORAL_NAMESPACE: ${SEMAR_TEMPORAL_NAMESPACE:-semar}
       SEMAR_SITE_ID: ${SEMAR_SITE_ID:-default}
@@ -101,7 +109,9 @@ services:
 
   semar-api:
     image: semar:dev
+    volumes: *extra-ca
     environment:
+      SSL_CERT_DIR: /etc/ssl/certs:/etc/semar/ca
       SEMAR_HTTP_ADDR: :8080
       SEMAR_DATABASE_URL: postgres://${POSTGRES_USER:-semar}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/semar?sslmode=disable
       # Creates the "admin" user on first start only; remove it afterwards.

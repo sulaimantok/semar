@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -70,22 +71,21 @@ const syncSchedulePrefix = "sync-"
 
 // scheduleOps is what schedule reconciliation needs from Temporal.
 type scheduleOps interface {
-	ensure(ctx context.Context, providerID string) error
+	ensure(ctx context.Context, providerID, taskQueue string) error
 	list(ctx context.Context) ([]string, error)
 	remove(ctx context.Context, scheduleID string) error
 	// servedHere reports whether an existing schedule starts its workflows
-	// on this worker's task queue.
-	servedHere(ctx context.Context, scheduleID string) (bool, error)
+	// on taskQueue.
+	servedHere(ctx context.Context, scheduleID, taskQueue string) (bool, error)
 }
 
 type temporalSchedules struct {
-	c         client.Client
-	taskQueue string
-	every     time.Duration
+	c     client.Client
+	every time.Duration
 }
 
-func (t temporalSchedules) ensure(ctx context.Context, providerID string) error {
-	return EnsureSyncSchedule(ctx, t.c, providerID, t.taskQueue, t.every)
+func (t temporalSchedules) ensure(ctx context.Context, providerID, taskQueue string) error {
+	return EnsureSyncSchedule(ctx, t.c, providerID, taskQueue, t.every)
 }
 
 func (t temporalSchedules) list(ctx context.Context) ([]string, error) {
@@ -108,13 +108,13 @@ func (t temporalSchedules) remove(ctx context.Context, scheduleID string) error 
 	return t.c.ScheduleClient().GetHandle(ctx, scheduleID).Delete(ctx)
 }
 
-func (t temporalSchedules) servedHere(ctx context.Context, scheduleID string) (bool, error) {
+func (t temporalSchedules) servedHere(ctx context.Context, scheduleID, taskQueue string) (bool, error) {
 	d, err := t.c.ScheduleClient().GetHandle(ctx, scheduleID).Describe(ctx)
 	if err != nil {
 		return false, err
 	}
 	a, ok := d.Schedule.Action.(*client.ScheduleWorkflowAction)
-	return ok && a.TaskQueue == t.taskQueue, nil
+	return ok && a.TaskQueue == taskQueue, nil
 }
 
 // ReconcileResult reports what a reconciliation changed.
@@ -124,18 +124,18 @@ type ReconcileResult struct {
 }
 
 // ReconcileSchedules makes Temporal's sync schedules match the database:
-//   - own lists the active providers served by this worker's site; each gets
-//     a schedule on this site's task queue. An existing schedule on another
-//     queue (the provider moved to this site) is rewritten; rewriteExisting
-//     rewrites every existing one, which re-encrypts their payload after a
-//     key rotation — do it on start;
+//   - own maps the active providers served by this worker to the task
+//     queue of their site; each gets a schedule on that queue. An existing
+//     schedule on another queue (the provider moved site) is rewritten;
+//     rewriteExisting rewrites every existing one, which re-encrypts their
+//     payload after a key rotation — do it on start;
 //   - active lists the active providers of every site; sync schedules for
 //     any other provider (removed from SEMAR) are deleted.
-func ReconcileSchedules(ctx context.Context, c client.Client, taskQueue string, every time.Duration, own, active []string, rewriteExisting bool) (ReconcileResult, error) {
-	return reconcile(ctx, temporalSchedules{c: c, taskQueue: taskQueue, every: every}, own, active, rewriteExisting)
+func ReconcileSchedules(ctx context.Context, c client.Client, every time.Duration, own map[string]string, active []string, rewriteExisting bool) (ReconcileResult, error) {
+	return reconcile(ctx, temporalSchedules{c: c, every: every}, own, active, rewriteExisting)
 }
 
-func reconcile(ctx context.Context, ops scheduleOps, own, active []string, rewriteExisting bool) (ReconcileResult, error) {
+func reconcile(ctx context.Context, ops scheduleOps, own map[string]string, active []string, rewriteExisting bool) (ReconcileResult, error) {
 	var res ReconcileResult
 	existing, err := ops.list(ctx)
 	if err != nil {
@@ -145,10 +145,16 @@ func reconcile(ctx context.Context, ops scheduleOps, own, active []string, rewri
 	for _, id := range existing {
 		have[id] = true
 	}
+	providers := make([]string, 0, len(own))
+	for p := range own {
+		providers = append(providers, p)
+	}
+	sort.Strings(providers)
 	var errs []error
-	for _, p := range own {
+	for _, p := range providers {
+		queue := own[p]
 		if have[SyncScheduleID(p)] && !rewriteExisting {
-			here, err := ops.servedHere(ctx, SyncScheduleID(p))
+			here, err := ops.servedHere(ctx, SyncScheduleID(p), queue)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("describe schedule %s: %w", SyncScheduleID(p), err))
 				continue
@@ -157,7 +163,7 @@ func reconcile(ctx context.Context, ops scheduleOps, own, active []string, rewri
 				continue
 			}
 		}
-		if err := ops.ensure(ctx, p); err != nil {
+		if err := ops.ensure(ctx, p, queue); err != nil {
 			errs = append(errs, err)
 			continue
 		}

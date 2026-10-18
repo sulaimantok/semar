@@ -8,6 +8,7 @@ import (
 
 	"github.com/sulaimantok/semar/internal/api/gen"
 	"github.com/sulaimantok/semar/internal/driver/contract"
+	"github.com/sulaimantok/semar/internal/driver/openstack"
 	"github.com/sulaimantok/semar/internal/driver/registry"
 	"github.com/sulaimantok/semar/internal/model"
 	"github.com/sulaimantok/semar/internal/store"
@@ -73,6 +74,9 @@ func (s *server) validateProvider(ctx context.Context, id string) (model.Provide
 			return model.Provider{}, &apiError{status: http.StatusGatewayTimeout, detail: "the provider did not answer in time"}
 		case errors.Is(err, contract.ErrUnauthorized):
 			return model.Provider{}, &apiError{status: http.StatusBadGateway, detail: "the provider refused the credentials"}
+		case errors.Is(err, openstack.ErrNoEndpoint):
+			return model.Provider{}, &apiError{status: http.StatusUnprocessableEntity,
+				detail: "the identity service answered, but its catalog has no compute endpoint for this region; check the region name (the server log lists the regions offered)"}
 		case errors.Is(err, contract.ErrRateLimited):
 			return model.Provider{}, &apiError{status: http.StatusBadGateway, detail: "the provider is rate limiting requests; try again later"}
 		default:

@@ -167,14 +167,24 @@ func Client(timeout time.Duration, tlsFingerprint string) (*http.Client, error) 
 			return nil
 		}
 	}
-	return &http.Client{Timeout: timeout, Transport: tr, CheckRedirect: noRedirects}, nil
+	return &http.Client{Timeout: timeout, Transport: tr, CheckRedirect: SameOriginRedirects}, nil
 }
 
-// ErrRedirect is returned when a provider answers with a redirect.
-var ErrRedirect = errors.New("provider answered with a redirect, which SEMAR does not follow")
+// ErrRedirect is returned when a provider redirects to another origin.
+var ErrRedirect = errors.New("provider redirected to another host or scheme, which SEMAR does not follow")
 
-// noRedirects refuses redirects. Go forwards custom headers such as
-// OpenStack's X-Auth-Token to whatever host a redirect names, so following
-// one could hand a token to another host. Provider APIs do not redirect
-// API calls; a redirect is a misconfiguration or an attack.
-func noRedirects(*http.Request, []*http.Request) error { return ErrRedirect }
+// SameOriginRedirects follows redirects only to the same scheme and host
+// (Nova answers /v2.1 with a redirect to /v2.1/). Go forwards custom
+// headers such as OpenStack's X-Auth-Token to whatever host a redirect
+// names, so following one elsewhere could hand a token to another host,
+// and a scheme change could send it in clear text.
+func SameOriginRedirects(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return fmt.Errorf("%w: too many redirects", ErrRedirect)
+	}
+	first := via[0].URL
+	if req.URL.Scheme != first.Scheme || !strings.EqualFold(req.URL.Host, first.Host) {
+		return ErrRedirect
+	}
+	return nil
+}
