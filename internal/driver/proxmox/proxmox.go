@@ -77,7 +77,10 @@ func New(cfg Config) (*Driver, error) {
 		cfg.Endpoints[i] = strings.TrimRight(strings.TrimSpace(e), "/")
 	}
 	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+		var err error
+		if cfg.HTTPClient, err = httpx.Client(30*time.Second, ""); err != nil {
+			return nil, err
+		}
 	}
 	return &Driver{cfg: cfg}, nil
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -62,6 +63,42 @@ func consoleVisibility(p *auth.Principal) store.Visibility {
 }
 
 func consoleTarget(providerID, externalID string) string { return providerID + "/vm/" + externalID }
+
+// consoleSlots bounds open consoles per user and per process: each one
+// holds a provider connection and goroutines.
+type consoleSlots struct {
+	mu      sync.Mutex
+	perUser map[string]int
+	total   int
+	maxUser int
+	maxAll  int
+}
+
+func newConsoleSlots(maxUser, maxAll int) *consoleSlots {
+	return &consoleSlots{perUser: map[string]int{}, maxUser: maxUser, maxAll: maxAll}
+}
+
+// acquire reserves a slot for user; release must be called exactly once.
+func (c *consoleSlots) acquire(user string) (release func(), ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.perUser[user] >= c.maxUser || c.total >= c.maxAll {
+		return nil, false
+	}
+	c.perUser[user]++
+	c.total++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			c.total--
+			if c.perUser[user]--; c.perUser[user] <= 0 {
+				delete(c.perUser, user)
+			}
+		})
+	}, true
+}
 
 func (s *server) CreateConsoleSession(ctx context.Context, req gen.CreateConsoleSessionRequestObject) (gen.CreateConsoleSessionResponseObject, error) {
 	instance := "/api/v1/resources/" + req.ProviderId + "/vm/" + req.ExternalId + "/console"
@@ -169,6 +206,12 @@ func (s *server) serveConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target := consoleTarget(tok.ProviderID, tok.ExternalID)
+	release, ok := s.consoles.acquire(p.UserID)
+	if !ok {
+		writeProblem(w, r, http.StatusTooManyRequests, "too many open consoles; close one and try again")
+		return
+	}
+	defer release()
 	vm, err := s.consoleVM(ctx, p, tok.ProviderID, tok.ExternalID)
 	if err != nil {
 		code, prob := s.problemFor(ctx, ConsoleWebSocketPath, err)

@@ -167,5 +167,14 @@ func Client(timeout time.Duration, tlsFingerprint string) (*http.Client, error) 
 			return nil
 		}
 	}
-	return &http.Client{Timeout: timeout, Transport: tr}, nil
+	return &http.Client{Timeout: timeout, Transport: tr, CheckRedirect: noRedirects}, nil
 }
+
+// ErrRedirect is returned when a provider answers with a redirect.
+var ErrRedirect = errors.New("provider answered with a redirect, which SEMAR does not follow")
+
+// noRedirects refuses redirects. Go forwards custom headers such as
+// OpenStack's X-Auth-Token to whatever host a redirect names, so following
+// one could hand a token to another host. Provider APIs do not redirect
+// API calls; a redirect is a misconfiguration or an attack.
+func noRedirects(*http.Request, []*http.Request) error { return ErrRedirect }

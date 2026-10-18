@@ -63,6 +63,10 @@ type Options struct {
 	// Defaults: 15 minutes and 4 hours.
 	ConsoleIdleTimeout time.Duration
 	ConsoleMaxDuration time.Duration
+	// ConsolesPerUser and ConsolesTotal bound open consoles per user and
+	// per process. Defaults: 5 and 200.
+	ConsolesPerUser int
+	ConsolesTotal   int
 	// Metrics receives HTTP request metrics; nil disables them.
 	Metrics *metrics.Registry
 	// TrustedOrigins are the browser origins (scheme://host[:port]) allowed
@@ -101,11 +105,18 @@ func NewHandler(opts Options) http.Handler {
 	if opts.ConsoleMaxDuration <= 0 {
 		opts.ConsoleMaxDuration = 4 * time.Hour
 	}
+	if opts.ConsolesPerUser <= 0 {
+		opts.ConsolesPerUser = 5
+	}
+	if opts.ConsolesTotal <= 0 {
+		opts.ConsolesTotal = 200
+	}
 	if opts.ValidateTimeout <= 0 {
 		opts.ValidateTimeout = 15 * time.Second
 	}
 	log := opts.Logger
-	srv := &server{opts: opts, logins: newLoginLimiter(opts.LoginLimits), originOK: originChecker(opts.TrustedOrigins)}
+	srv := &server{opts: opts, logins: newLoginLimiter(opts.LoginLimits), originOK: originChecker(opts.TrustedOrigins),
+		consoles: newConsoleSlots(opts.ConsolesPerUser, opts.ConsolesTotal)}
 
 	strict := gen.NewStrictHandlerWithOptions(srv, []gen.StrictMiddlewareFunc{srv.authorize}, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -147,6 +158,7 @@ type server struct {
 	opts     Options
 	logins   *loginLimiter
 	originOK func(origin, host string) bool
+	consoles *consoleSlots
 }
 
 var _ gen.StrictServerInterface = (*server)(nil)

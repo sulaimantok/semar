@@ -225,3 +225,43 @@ func waitForAudit(t *testing.T, a *settingsAPI, want string) {
 	}
 	t.Fatalf("audit log lacks %q: %v", want, a.auditActions(t))
 }
+
+func TestConsoleLimitPerUser(t *testing.T) {
+	c := newConsoleAPI(t)
+	slots := newConsoleSlots(1, 10)
+	release, ok := slots.acquire("u1")
+	if !ok {
+		t.Fatal("first slot refused")
+	}
+	if _, ok := slots.acquire("u1"); ok {
+		t.Fatal("second console for the same user allowed")
+	}
+	if r2, ok := slots.acquire("u2"); !ok {
+		t.Fatal("other user refused")
+	} else {
+		r2()
+	}
+	release()
+	release() // idempotent
+	if r, ok := slots.acquire("u1"); !ok {
+		t.Fatal("slot not returned")
+	} else {
+		r()
+	}
+
+	// Through the API: the sixth concurrent console of one user is refused.
+	var open []*websocket.Conn
+	for i := 0; i < 5; i++ {
+		conn, status, err := c.dial(t, c.token(t, "serial", http.StatusCreated).Token, c.srv.URL)
+		if err != nil {
+			t.Fatalf("console %d: %v (HTTP %d)", i+1, err, status)
+		}
+		open = append(open, conn)
+	}
+	if _, status, err := c.dial(t, c.token(t, "serial", http.StatusCreated).Token, c.srv.URL); err == nil || status != http.StatusTooManyRequests {
+		t.Fatalf("sixth console: %v (HTTP %d), want 429", err, status)
+	}
+	for _, conn := range open {
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	}
+}

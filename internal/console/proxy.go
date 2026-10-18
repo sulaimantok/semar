@@ -77,7 +77,10 @@ func DialUpstream(ctx context.Context, t contract.ConsoleTarget) (*websocket.Con
 		tr.TLSClientConfig = t.TLS.Clone()
 	}
 	c, resp, err := websocket.Dial(ctx, t.URL, &websocket.DialOptions{
-		HTTPClient:   &http.Client{Transport: tr, Timeout: 30 * time.Second},
+		HTTPClient: &http.Client{Transport: tr, Timeout: 30 * time.Second,
+			// The handshake carries provider credentials; never follow a
+			// redirect to another host.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		HTTPHeader:   t.Header,
 		Subprotocols: t.Subprotocols,
 	})
