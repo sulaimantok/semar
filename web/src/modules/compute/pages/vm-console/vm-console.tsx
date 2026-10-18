@@ -37,6 +37,10 @@ export function VmConsolePage() {
   const vm = useVm(providerId, externalId);
   const session = useConsoleSession(providerId, externalId);
   const [socket, setSocket] = useState<WebSocket | null>(null);
+  // One value per connection: the viewer is keyed by it so that it mounts
+  // exactly once per socket. Remounting would run noVNC's disconnect(),
+  // which closes the socket before the first frame.
+  const [connection, setConnection] = useState(0);
   const [phase, setPhase] = useState<IPhase>("connecting");
   const [closed, setClosed] = useState("");
   const vnc = useRef<IVncScreenHandle>(null);
@@ -52,9 +56,10 @@ export function VmConsolePage() {
         ws.addEventListener("open", () => setPhase("open"));
         ws.addEventListener("close", (e) => {
           setPhase("closed");
-          setClosed(closeMessage(e.code));
+          setClosed(closeMessage(e.code, e.reason));
         });
         setSocket(ws);
+        setConnection((n) => n + 1);
       },
       onError: () => setPhase("closed"),
     });
@@ -118,9 +123,9 @@ export function VmConsolePage() {
 
       {socket &&
         (kind === "vnc" ? (
-          <VncScreen key={`vnc-${socket.url}-${session.data?.token}`} ref={vnc} socket={socket} onConnected={onVncConnected} />
+          <VncScreen key={`vnc-${connection}`} ref={vnc} socket={socket} onConnected={onVncConnected} />
         ) : (
-          <SerialTerminal key={`serial-${session.data?.token}`} socket={socket} />
+          <SerialTerminal key={`serial-${connection}`} socket={socket} />
         ))}
       <p className={styles.note}>
         Sessions close after inactivity and after a maximum duration; every session is recorded in the audit log.

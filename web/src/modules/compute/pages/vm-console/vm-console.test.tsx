@@ -6,7 +6,19 @@ import { json, problem, renderRoutes, stubApi } from "@/shared/test/render";
 import { VmConsolePage } from "./vm-console";
 
 // noVNC and xterm.js need a real canvas; the page logic is what is tested.
-vi.mock("./components/vnc-screen", () => ({ VncScreen: () => <div>vnc screen</div> }));
+// The VNC stand-in counts mounts: a remount would close the socket.
+const vncMounts = vi.hoisted(() => ({ count: 0 }));
+vi.mock("./components/vnc-screen", async () => {
+  const { useEffect } = await import("react");
+  return {
+    VncScreen: () => {
+      useEffect(() => {
+        vncMounts.count++;
+      }, []);
+      return <div>vnc screen</div>;
+    },
+  };
+});
 vi.mock("./components/serial-terminal", () => ({ SerialTerminal: () => <div>serial terminal</div> }));
 
 class FakeSocket extends EventTarget {
@@ -54,6 +66,9 @@ describe("VmConsolePage", () => {
       json(201, { token: "tok123", kind: "vnc", expiresAt: new Date().toISOString(), websocketPath: "/api/v1/console/ws" }),
     );
     expect(await screen.findByText("vnc screen")).toBeTruthy();
+    // Let the mutation settle: the viewer must not remount when it does.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(vncMounts.count).toBe(1);
     const ws = FakeSocket.last!;
     expect(ws.url).toBe(`ws://${window.location.host}/api/v1/console/ws`);
     expect(ws.protocols).toEqual(["binary", "semar.token.tok123"]);

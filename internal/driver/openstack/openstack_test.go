@@ -535,3 +535,14 @@ func TestSecurityGroups(t *testing.T) {
 		t.Fatalf("security group = %+v", g)
 	}
 }
+
+func TestDisabledConsoleTypeIsUnsupported(t *testing.T) {
+	c := newFakeCloud(t)
+	c.consoleHook = func(*http.Request) (int, any) {
+		return 400, map[string]any{"badRequest": map[string]any{"message": "Unavailable console type serial.", "code": 400}}
+	}
+	_, err := c.driver(t).OpenConsole(context.Background(), "srv-00000", contract.ConsoleSerial)
+	if !errors.Is(err, contract.ErrConsoleUnsupported) {
+		t.Fatalf("disabled serial proxy: %v, want ErrConsoleUnsupported", err)
+	}
+}

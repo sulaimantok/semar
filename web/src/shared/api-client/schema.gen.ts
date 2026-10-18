@@ -165,6 +165,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{projectId}/mappings/{mappingId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+                mappingId: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a mapping
+         * @description Resources it assigned become unassigned (or follow another rule) on the next sync.
+         */
+        delete: operations["deleteProjectMapping"];
+        options?: never;
+        head?: never;
+        /**
+         * Change a mapping's provider or external scope
+         * @description Ownership of resources follows on the next sync of the affected providers.
+         */
+        patch: operations["updateProjectMapping"];
+        trace?: never;
+    };
     "/api/v1/providers": {
         parameters: {
             query?: never;
@@ -615,6 +642,10 @@ export interface components {
             providerId: components["schemas"]["EntityId"];
             externalScope: string;
         };
+        ProjectMappingUpdate: {
+            providerId?: components["schemas"]["EntityId"];
+            externalScope?: string;
+        };
         ProjectMappingList: {
             items: components["schemas"]["ProjectMapping"][];
         };
@@ -986,6 +1017,56 @@ export interface operations {
         responses: {
             /** @description Created */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectMapping"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    deleteProjectMapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+                mappingId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    updateProjectMapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+                mappingId: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectMappingUpdate"];
+            };
+        };
+        responses: {
+            /** @description The updated mapping */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

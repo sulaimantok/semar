@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -251,4 +252,48 @@ func (a *settingsAPI) auditActions(t *testing.T) []string {
 		out = append(out, e.Actor+" "+e.Action+" "+e.Target+" "+string(e.Outcome))
 	}
 	return out
+}
+
+func TestEditAndRemoveProjectMappings(t *testing.T) {
+	a := newSettingsAPI(t)
+	a.expect(a.call("POST", "/api/v1/providers", `{"id":"pve-a","type":"proxmox","name":"PVE","endpoints":["https://pve.example.com:8006"]}`), 201, nil)
+	a.expect(a.call("POST", "/api/v1/providers", `{"id":"pve-b","type":"proxmox","name":"PVE B","endpoints":["https://pve-b.example.com:8006"]}`), 201, nil)
+	for _, p := range []string{"payment", "search"} {
+		a.expect(a.call("POST", "/api/v1/projects", `{"id":"`+p+`","name":"`+p+`"}`), 201, nil)
+	}
+	var m, other gen.ProjectMapping
+	a.expect(a.call("POST", "/api/v1/projects/payment/mappings", `{"providerId":"pve-a","externalScope":"pool:pay"}`), 201, &m)
+	a.expect(a.call("POST", "/api/v1/projects/search/mappings", `{"providerId":"pve-a","externalScope":"pool:search"}`), 201, &other)
+	path := "/api/v1/projects/payment/mappings/" + strconv.FormatInt(m.Id, 10)
+
+	var got gen.ProjectMapping
+	a.expect(a.call("PATCH", path, `{"externalScope":" tag:payment "}`), 200, &got)
+	if got.ExternalScope != "tag:payment" || got.ProviderId != "pve-a" || got.Id != m.Id {
+		t.Fatalf("after scope change = %+v", got)
+	}
+	a.expect(a.call("PATCH", path, `{"providerId":"pve-b"}`), 200, &got)
+	if got.ProviderId != "pve-b" {
+		t.Fatalf("after provider change = %+v", got)
+	}
+	a.expect(a.call("PATCH", path, `{"providerId":"pve-a","externalScope":"pool:search"}`), 409, nil)
+	for _, body := range []string{`{}`, `{"externalScope":"name:[x"}`} {
+		a.expect(a.call("PATCH", path, body), 400, nil)
+	}
+	a.expect(a.call("PATCH", path, `{"providerId":"ghost"}`), 422, nil)
+	// A mapping is addressed through its own project only.
+	a.expect(a.call("DELETE", "/api/v1/projects/payment/mappings/"+strconv.FormatInt(other.Id, 10), ""), 404, nil)
+
+	a.expect(a.call("DELETE", path, ""), 204, nil)
+	a.expect(a.call("DELETE", path, ""), 404, nil)
+	var list gen.ProjectMappingList
+	a.expect(a.call("GET", "/api/v1/projects/payment/mappings", ""), 200, &list)
+	if len(list.Items) != 0 {
+		t.Fatalf("mappings after delete = %+v", list.Items)
+	}
+	actions := strings.Join(a.auditActions(t), "\n")
+	for _, want := range []string{"project_mapping.update payment/" + strconv.FormatInt(m.Id, 10) + " success", "project_mapping.delete payment/" + strconv.FormatInt(m.Id, 10) + " success"} {
+		if !strings.Contains(actions, want) {
+			t.Errorf("audit lacks %q", want)
+		}
+	}
 }

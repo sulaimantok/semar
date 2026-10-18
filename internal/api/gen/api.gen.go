@@ -375,6 +375,14 @@ type ProjectMappingList struct {
 	Items []ProjectMapping `json:"items"`
 }
 
+// ProjectMappingUpdate defines model for ProjectMappingUpdate.
+type ProjectMappingUpdate struct {
+	ExternalScope *string `json:"externalScope,omitempty"`
+
+	// ProviderId Examples: os-jkt
+	ProviderId *EntityId `json:"providerId,omitempty"`
+}
+
 // Provider defines model for Provider.
 type Provider struct {
 	// ApiVersions Maximum API (micro)version per service, from the last connection check.
@@ -638,6 +646,9 @@ type CreateProjectJSONRequestBody = ProjectCreate
 // CreateProjectMappingJSONRequestBody defines body for CreateProjectMapping for application/json ContentType.
 type CreateProjectMappingJSONRequestBody = ProjectMappingCreate
 
+// UpdateProjectMappingJSONRequestBody defines body for UpdateProjectMapping for application/json ContentType.
+type UpdateProjectMappingJSONRequestBody = ProjectMappingUpdate
+
 // CreateProviderJSONRequestBody defines body for CreateProvider for application/json ContentType.
 type CreateProviderJSONRequestBody = ProviderCreate
 
@@ -679,6 +690,12 @@ type ServerInterface interface {
 	// CreateProjectMapping Map a provider scope (OpenStack project, PVE pool) to the project
 	// (POST /api/v1/projects/{projectId}/mappings)
 	CreateProjectMapping(w http.ResponseWriter, r *http.Request, projectId ProjectId)
+	// DeleteProjectMapping Remove a mapping
+	// (DELETE /api/v1/projects/{projectId}/mappings/{mappingId})
+	DeleteProjectMapping(w http.ResponseWriter, r *http.Request, projectId ProjectId, mappingId int64)
+	// UpdateProjectMapping Change a mapping's provider or external scope
+	// (PATCH /api/v1/projects/{projectId}/mappings/{mappingId})
+	UpdateProjectMapping(w http.ResponseWriter, r *http.Request, projectId ProjectId, mappingId int64)
 	// ListProviders List active providers
 	// (GET /api/v1/providers)
 	ListProviders(w http.ResponseWriter, r *http.Request)
@@ -916,6 +933,76 @@ func (siw *ServerInterfaceWrapper) CreateProjectMapping(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateProjectMapping(w, r, projectId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteProjectMapping operation middleware
+func (siw *ServerInterfaceWrapper) DeleteProjectMapping(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId ProjectId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "mappingId" -------------
+	var mappingId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "mappingId", r.PathValue("mappingId"), &mappingId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mappingId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteProjectMapping(w, r, projectId, mappingId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateProjectMapping operation middleware
+func (siw *ServerInterfaceWrapper) UpdateProjectMapping(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId ProjectId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "mappingId" -------------
+	var mappingId int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "mappingId", r.PathValue("mappingId"), &mappingId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "mappingId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateProjectMapping(w, r, projectId, mappingId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1595,6 +1682,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/projects", wrapper.CreateProject)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/projects/{projectId}/mappings", wrapper.ListProjectMappings)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/projects/{projectId}/mappings", wrapper.CreateProjectMapping)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/projects/{projectId}/mappings/{mappingId}", wrapper.DeleteProjectMapping)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/projects/{projectId}/mappings/{mappingId}", wrapper.UpdateProjectMapping)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/providers", wrapper.ListProviders)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/providers", wrapper.CreateProvider)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/providers/{providerId}", wrapper.DeleteProvider)
@@ -1926,6 +2015,81 @@ type CreateProjectMappingdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response CreateProjectMappingdefaultApplicationProblemPlusJSONResponse) VisitCreateProjectMappingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteProjectMappingRequestObject struct {
+	ProjectId ProjectId `json:"projectId"`
+	MappingId int64     `json:"mappingId"`
+}
+
+type DeleteProjectMappingResponseObject interface {
+	VisitDeleteProjectMappingResponse(w http.ResponseWriter) error
+}
+
+type DeleteProjectMapping204Response struct {
+}
+
+func (response DeleteProjectMapping204Response) VisitDeleteProjectMappingResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteProjectMappingdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response DeleteProjectMappingdefaultApplicationProblemPlusJSONResponse) VisitDeleteProjectMappingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateProjectMappingRequestObject struct {
+	ProjectId ProjectId `json:"projectId"`
+	MappingId int64     `json:"mappingId"`
+	Body      *UpdateProjectMappingJSONRequestBody
+}
+
+type UpdateProjectMappingResponseObject interface {
+	VisitUpdateProjectMappingResponse(w http.ResponseWriter) error
+}
+
+type UpdateProjectMapping200JSONResponse ProjectMapping
+
+func (response UpdateProjectMapping200JSONResponse) VisitUpdateProjectMappingResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateProjectMappingdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response UpdateProjectMappingdefaultApplicationProblemPlusJSONResponse) VisitUpdateProjectMappingResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -2637,6 +2801,12 @@ type StrictServerInterface interface {
 	// CreateProjectMapping Map a provider scope (OpenStack project, PVE pool) to the project
 	// (POST /api/v1/projects/{projectId}/mappings)
 	CreateProjectMapping(ctx context.Context, request CreateProjectMappingRequestObject) (CreateProjectMappingResponseObject, error)
+	// DeleteProjectMapping Remove a mapping
+	// (DELETE /api/v1/projects/{projectId}/mappings/{mappingId})
+	DeleteProjectMapping(ctx context.Context, request DeleteProjectMappingRequestObject) (DeleteProjectMappingResponseObject, error)
+	// UpdateProjectMapping Change a mapping's provider or external scope
+	// (PATCH /api/v1/projects/{projectId}/mappings/{mappingId})
+	UpdateProjectMapping(ctx context.Context, request UpdateProjectMappingRequestObject) (UpdateProjectMappingResponseObject, error)
 	// ListProviders List active providers
 	// (GET /api/v1/providers)
 	ListProviders(ctx context.Context, request ListProvidersRequestObject) (ListProvidersResponseObject, error)
@@ -2944,6 +3114,67 @@ func (sh *strictHandler) CreateProjectMapping(w http.ResponseWriter, r *http.Req
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateProjectMappingResponseObject); ok {
 		if err := validResponse.VisitCreateProjectMappingResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteProjectMapping operation middleware
+func (sh *strictHandler) DeleteProjectMapping(w http.ResponseWriter, r *http.Request, projectId ProjectId, mappingId int64) {
+	var request DeleteProjectMappingRequestObject
+
+	request.ProjectId = projectId
+	request.MappingId = mappingId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteProjectMapping(ctx, request.(DeleteProjectMappingRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteProjectMapping")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteProjectMappingResponseObject); ok {
+		if err := validResponse.VisitDeleteProjectMappingResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateProjectMapping operation middleware
+func (sh *strictHandler) UpdateProjectMapping(w http.ResponseWriter, r *http.Request, projectId ProjectId, mappingId int64) {
+	var request UpdateProjectMappingRequestObject
+
+	request.ProjectId = projectId
+	request.MappingId = mappingId
+
+	var body UpdateProjectMappingJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateProjectMapping(ctx, request.(UpdateProjectMappingRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateProjectMapping")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateProjectMappingResponseObject); ok {
+		if err := validResponse.VisitUpdateProjectMappingResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

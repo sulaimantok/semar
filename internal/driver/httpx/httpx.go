@@ -29,11 +29,50 @@ const MaxResponseBytes = 64 << 20
 type StatusError struct {
 	Method, URL string
 	Status      int
-	sentinel    error
+	// Message is the provider's own explanation, when it sent one (Nova's
+	// {"badRequest": {"message": …}}, Keystone's {"error": {"message": …}}),
+	// truncated. It is for server logs; clients only see a classification.
+	Message  string
+	sentinel error
 }
 
 func (e *StatusError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("%s %s: HTTP %d: %v: %s", e.Method, e.URL, e.Status, e.sentinel, e.Message)
+	}
 	return fmt.Sprintf("%s %s: HTTP %d: %v", e.Method, e.URL, e.Status, e.sentinel)
+}
+
+// providerMessage extracts a short message from an OpenStack or Proxmox
+// error body: {"<fault>": {"message": "…"}}, {"error": {"message": …}},
+// {"message": …} or {"errors": {…}}.
+func providerMessage(body []byte) string {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(body, &top) != nil {
+		return ""
+	}
+	var msg string
+	for k, raw := range top {
+		var inner struct {
+			Message string `json:"message"`
+		}
+		switch {
+		case k == "message":
+			_ = json.Unmarshal(raw, &msg)
+		case k == "errors":
+			msg = string(raw)
+		case json.Unmarshal(raw, &inner) == nil && inner.Message != "":
+			msg = inner.Message
+		}
+		if msg != "" {
+			break
+		}
+	}
+	msg = strings.Join(strings.Fields(msg), " ")
+	if len(msg) > 300 {
+		msg = msg[:300] + "…"
+	}
+	return msg
 }
 
 func (e *StatusError) Unwrap() error { return e.sentinel }
@@ -107,8 +146,9 @@ func Do(ctx context.Context, c *http.Client, r Request, out any) (http.Header, e
 	ok := resp.StatusCode >= 200 && resp.StatusCode <= 299 ||
 		r.AllowMultipleChoices && resp.StatusCode == http.StatusMultipleChoices
 	if !ok {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
-		return resp.Header, &StatusError{Method: r.Method, URL: redact(r.URL), Status: resp.StatusCode, sentinel: Classify(resp.StatusCode)}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		return resp.Header, &StatusError{Method: r.Method, URL: redact(r.URL), Status: resp.StatusCode,
+			Message: providerMessage(body), sentinel: Classify(resp.StatusCode)}
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))

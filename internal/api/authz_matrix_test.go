@@ -45,6 +45,8 @@ var matrixRequests = []struct {
 	{"CreateSite", matrixRequest{"POST", "/api/v1/sites", `{"id":"site-m","name":"Matrix"}`}},
 	{"CreateProject", matrixRequest{"POST", "/api/v1/projects", `{"id":"proj-m","name":"Matrix"}`}},
 	{"CreateProjectMapping", matrixRequest{"POST", "/api/v1/projects/search/mappings", `{"providerId":"os-jkt","externalScope":"proj-search"}`}},
+	{"UpdateProjectMapping", matrixRequest{"PATCH", "/api/v1/projects/search/mappings/999999", `{"externalScope":"pool:other"}`}},
+	{"DeleteProjectMapping", matrixRequest{"DELETE", "/api/v1/projects/search/mappings/999999", ""}},
 	{"CreateProvider", matrixRequest{"POST", "/api/v1/providers", `{"id":"prov-m","type":"fake","name":"Matrix","endpoints":["https://fake.example.com"]}`}},
 	{"PutCredential", matrixRequest{"PUT", "/api/v1/providers/pve-lab/credentials", `{"purpose":"discovery","scope":"provider","secret":{"token_id":"t","token_secret":"s"}}`}},
 	{"DeleteCredential", matrixRequest{"DELETE", "/api/v1/providers/pve-lab/credentials?purpose=discovery&scope=provider", ""}},

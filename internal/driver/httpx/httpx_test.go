@@ -65,3 +65,16 @@ func TestClassify(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderMessage(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"badRequest": {"message": "Unavailable console type novnc.", "code": 400}}`:               "Unavailable console type novnc.",
+		`{"error": {"message": "The request you have made requires authentication.", "code": 401}}`: "The request you have made requires authentication.",
+		`{"message": "Permission check failed (/vms/100, VM.Console)\n"}`:                           "Permission check failed (/vms/100, VM.Console)",
+		`not json`: "",
+	} {
+		if got := providerMessage([]byte(body)); got != want {
+			t.Errorf("providerMessage(%s) = %q, want %q", body, got, want)
+		}
+	}
+}
