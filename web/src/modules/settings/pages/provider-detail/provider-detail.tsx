@@ -84,7 +84,7 @@ export function ProviderDetailPage() {
             <dd className={cn(styles.factValue, styles.mono)}>{p.tlsFingerprint || "system CAs"}</dd>
           </dl>
         </section>
-        <SyncStatusCard providerId={p.id} />
+        <SyncStatusCard providerId={p.id} site={p.siteId ?? "default"} />
         <ConnectionCard provider={p} canCheck={isAdmin} />
       </div>
 
@@ -93,7 +93,7 @@ export function ProviderDetailPage() {
   );
 }
 
-function SyncStatusCard({ providerId }: { providerId: string }) {
+function SyncStatusCard({ providerId, site }: { providerId: string; site: string }) {
   const status = useSyncStatus(providerId);
   return (
     <section className={styles.card} aria-labelledby="provider-sync">
@@ -103,7 +103,11 @@ function SyncStatusCard({ providerId }: { providerId: string }) {
       {status.isPending && <p className={styles.muted}>Loading…</p>}
       {status.isError && <ApiErrorAlert error={status.error} />}
       {status.data === null && (
-        <p className={styles.muted}>Not synced yet. The first sync runs within one sync interval after registration.</p>
+        <p className={styles.muted}>
+          Not synced yet. A semar-worker serving site <span className={styles.mono}>{site}</span> (
+          <span className={styles.mono}>SEMAR_SITE_ID</span>) runs the first sync within one sync interval; if none is
+          running, this provider is never synced.
+        </p>
       )}
       {status.data && (
         <dl className={styles.facts}>

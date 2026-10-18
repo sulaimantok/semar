@@ -20,5 +20,8 @@ describe("console utils", () => {
     expect(closeMessage(4001)).toMatch(/inactivity/);
     expect(closeMessage(4003)).toMatch(/revoked/);
     expect(closeMessage(4999)).toMatch(/4999/);
+    expect(closeMessage(4004, "this console kind is not available for the VM")).toBe(
+      "This console kind is not available for the VM.",
+    );
   });
 });

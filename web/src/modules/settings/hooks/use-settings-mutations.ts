@@ -5,6 +5,8 @@ import { globalFilterKeys } from "@/modules/global-filter";
 
 import {
   createMapping,
+  deleteMapping,
+  updateMapping,
   createProject,
   createProvider,
   createSite,
@@ -16,6 +18,7 @@ import {
   type ICredentialPurpose,
   type ICredentialPut,
   type IProjectMappingCreate,
+  type IProjectMappingUpdate,
   type IProjectCreate,
   type IProviderCreate,
   type IProviderUpdate,
@@ -56,6 +59,28 @@ export function useCreateMapping(projectId: string) {
       await qc.invalidateQueries({ queryKey: computeKeys.all });
     },
   });
+}
+
+/** Mapping changes re-derive ownership on the next sync. */
+function useInvalidateMappings(projectId: string) {
+  const qc = useQueryClient();
+  return async () => {
+    await qc.invalidateQueries({ queryKey: settingsKeys.mappings(projectId) });
+    await qc.invalidateQueries({ queryKey: computeKeys.all });
+  };
+}
+
+export function useUpdateMapping(projectId: string) {
+  const invalidate = useInvalidateMappings(projectId);
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: IProjectMappingUpdate }) => updateMapping(projectId, id, body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteMapping(projectId: string) {
+  const invalidate = useInvalidateMappings(projectId);
+  return useMutation({ mutationFn: (id: number) => deleteMapping(projectId, id), onSuccess: invalidate });
 }
 
 /** Provider changes also affect the compute module's provider filter. */

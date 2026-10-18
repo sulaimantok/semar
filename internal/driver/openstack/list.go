@@ -342,6 +342,19 @@ func (d *Driver) listServers(ctx context.Context, since time.Time) ([]contract.V
 	} else if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	// Volume-booted VMs without a host (stopped, shelved) are resolved from
+	// the image metadata Cinder copied onto their volumes; read only when
+	// some VM needs it.
+	var volumeArch map[string]contract.Arch
+	for _, s := range servers {
+		if s.imageID() == "" && hostArch[hostID[s.Host]] == "" && len(s.VolumesAttached) > 0 {
+			volumeArch = d.volumeArchitectures(ctx, imageArch)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			break
+		}
+	}
 
 	out := make([]contract.VirtualMachine, 0, len(servers))
 	for _, s := range servers {
@@ -355,8 +368,15 @@ func (d *Driver) listServers(ctx context.Context, since time.Time) ([]contract.V
 		}
 		if a, ok := imageArch[vm.ImageID]; ok && a != contract.ArchUnknown {
 			vm.Arch = a
-		} else if a := hostArch[vm.HypervisorID]; a != "" {
+		} else if a := hostArch[vm.HypervisorID]; a != "" && a != contract.ArchUnknown {
 			vm.Arch = a
+		} else {
+			for _, v := range s.VolumesAttached {
+				if a := volumeArch[v.ID]; a != "" && a != contract.ArchUnknown {
+					vm.Arch = a
+					break
+				}
+			}
 		}
 		for _, addrs := range s.Addresses {
 			for _, a := range addrs {
@@ -375,6 +395,47 @@ func (d *Driver) listServers(ctx context.Context, since time.Time) ([]contract.V
 		out = append(out, vm)
 	}
 	return out, nil
+}
+
+// volumeArchitectures maps volume IDs to the architecture recorded in their
+// volume_image_metadata (hw_architecture, architecture, or the source
+// image's). Errors yield an empty map: arch is a best-effort attribute.
+func (d *Driver) volumeArchitectures(ctx context.Context, imageArch map[string]contract.Arch) map[string]contract.Arch {
+	out := map[string]contract.Arch{}
+	if ok, err := d.hasService(ctx, "volumev3"); err != nil || !ok {
+		return out
+	}
+	params := map[string]string{}
+	if d.allProjects() {
+		params["all_tenants"] = "1"
+	}
+	_ = page(ctx, func(ctx context.Context, marker string) ([]string, error) {
+		var resp struct {
+			Volumes []struct {
+				ID       string            `json:"id"`
+				Metadata map[string]string `json:"volume_image_metadata"`
+			} `json:"volumes"`
+		}
+		if err := d.call(ctx, "volumev3", "/volumes/detail"+query(params, marker), "volume 3.0", &resp); err != nil {
+			return nil, err
+		}
+		ids := make([]string, len(resp.Volumes))
+		for i, v := range resp.Volumes {
+			ids[i] = v.ID
+			arch := contract.NormalizeArch(v.Metadata["hw_architecture"])
+			if arch == contract.ArchUnknown {
+				arch = contract.NormalizeArch(v.Metadata["architecture"])
+			}
+			if arch == contract.ArchUnknown {
+				arch = imageArch[v.Metadata["image_id"]]
+			}
+			if arch != "" && arch != contract.ArchUnknown {
+				out[v.ID] = arch
+			}
+		}
+		return ids, nil
+	})
+	return out
 }
 
 // --- Images ---

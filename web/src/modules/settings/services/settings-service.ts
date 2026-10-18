@@ -6,6 +6,7 @@ export type IProject = components["schemas"]["Project"];
 export type IProjectCreate = components["schemas"]["ProjectCreate"];
 export type IProjectMapping = components["schemas"]["ProjectMapping"];
 export type IProjectMappingCreate = components["schemas"]["ProjectMappingCreate"];
+export type IProjectMappingUpdate = components["schemas"]["ProjectMappingUpdate"];
 export type IProvider = components["schemas"]["Provider"];
 export type IProviderCreate = components["schemas"]["ProviderCreate"];
 export type IProviderUpdate = components["schemas"]["ProviderUpdate"];
@@ -47,6 +48,16 @@ export async function fetchMappings(projectId: string): Promise<IProjectMapping[
 
 export async function createMapping(projectId: string, body: IProjectMappingCreate): Promise<IProjectMapping> {
   return unwrap(await apiClient.POST("/api/v1/projects/{projectId}/mappings", { params: { path: { projectId } }, body }));
+}
+
+export async function updateMapping(projectId: string, mappingId: number, body: IProjectMappingUpdate): Promise<IProjectMapping> {
+  return unwrap(
+    await apiClient.PATCH("/api/v1/projects/{projectId}/mappings/{mappingId}", { params: { path: { projectId, mappingId } }, body }),
+  );
+}
+
+export async function deleteMapping(projectId: string, mappingId: number): Promise<void> {
+  ensureOk(await apiClient.DELETE("/api/v1/projects/{projectId}/mappings/{mappingId}", { params: { path: { projectId, mappingId } } }));
 }
 
 export async function fetchProviders(): Promise<IProvider[]> {

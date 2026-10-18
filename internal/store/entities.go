@@ -225,6 +225,41 @@ func (s *Store) CreateProjectMapping(ctx context.Context, m model.ProjectMapping
 	return m, mapErr(err)
 }
 
+// UpdateProjectMapping changes a mapping of projectID. A scope already
+// mapped on that provider fails with ErrConflict.
+func (s *Store) UpdateProjectMapping(ctx context.Context, projectID string, id int64, providerID, externalScope string) (model.ProjectMapping, error) {
+	if err := ValidateMappingScope(externalScope); err != nil {
+		return model.ProjectMapping{}, err
+	}
+	m := model.ProjectMapping{ID: id, ProjectID: projectID}
+	err := s.pool.QueryRow(ctx, `
+		UPDATE project_mappings SET provider_id = $3, external_scope = $4
+		WHERE id = $1 AND project_id = $2
+		RETURNING provider_id, external_scope, created_at`, id, projectID, providerID, externalScope).
+		Scan(&m.ProviderID, &m.ExternalScope, &m.CreatedAt)
+	return m, mapErr(err)
+}
+
+// GetProjectMapping returns one mapping of projectID.
+func (s *Store) GetProjectMapping(ctx context.Context, projectID string, id int64) (model.ProjectMapping, error) {
+	m := model.ProjectMapping{ID: id, ProjectID: projectID}
+	err := s.pool.QueryRow(ctx, `SELECT provider_id, external_scope, created_at FROM project_mappings WHERE id = $1 AND project_id = $2`,
+		id, projectID).Scan(&m.ProviderID, &m.ExternalScope, &m.CreatedAt)
+	return m, mapErr(err)
+}
+
+// DeleteProjectMapping removes a mapping of projectID.
+func (s *Store) DeleteProjectMapping(ctx context.Context, projectID string, id int64) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM project_mappings WHERE id = $1 AND project_id = $2`, id, projectID)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ListProjectMappings returns a project's mappings ordered by provider and scope.
 func (s *Store) ListProjectMappings(ctx context.Context, projectID string) ([]model.ProjectMapping, error) {
 	rows, err := s.pool.Query(ctx, `

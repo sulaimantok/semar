@@ -11,13 +11,19 @@ type fakeSchedules struct {
 	ids []string
 	// elsewhere holds schedules whose task queue belongs to another site.
 	elsewhere []string
+	// queues records the task queue each ensured schedule got.
+	queues    map[string]string
 	ensured   []string
 	removed   []string
 	failFor   string
 	listError error
 }
 
-func (f *fakeSchedules) ensure(_ context.Context, p string) error {
+func (f *fakeSchedules) ensure(_ context.Context, p, queue string) error {
+	if f.queues == nil {
+		f.queues = map[string]string{}
+	}
+	f.queues[p] = queue
 	if p == f.failFor {
 		return errors.New("boom")
 	}
@@ -32,7 +38,7 @@ func (f *fakeSchedules) list(context.Context) ([]string, error) {
 	return slices.Clone(f.ids), f.listError
 }
 
-func (f *fakeSchedules) servedHere(_ context.Context, id string) (bool, error) {
+func (f *fakeSchedules) servedHere(_ context.Context, id, _ string) (bool, error) {
 	return !slices.Contains(f.elsewhere, id), nil
 }
 
@@ -44,8 +50,7 @@ func (f *fakeSchedules) remove(_ context.Context, id string) error {
 
 func TestReconcileCreatesMissingAndRemovesDeleted(t *testing.T) {
 	ops := &fakeSchedules{ids: []string{"sync-a", "sync-gone", "sync-other-site", "unrelated"}}
-	res, err := reconcile(context.Background(), ops,
-		[]string{"a", "b"},                      // this site
+	res, err := reconcile(context.Background(), ops, own("a", "b"), // this site
 		[]string{"a", "b", "other-site"}, false) // all sites
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +65,7 @@ func TestReconcileCreatesMissingAndRemovesDeleted(t *testing.T) {
 
 func TestReconcileRewritesOnStart(t *testing.T) {
 	ops := &fakeSchedules{ids: []string{"sync-a"}}
-	res, err := reconcile(context.Background(), ops, []string{"a"}, []string{"a"}, true)
+	res, err := reconcile(context.Background(), ops, own("a"), []string{"a"}, true)
 	if err != nil || !slices.Equal(res.Ensured, []string{"a"}) {
 		t.Fatalf("rewrite on start = %+v, %v", res, err)
 	}
@@ -68,12 +73,12 @@ func TestReconcileRewritesOnStart(t *testing.T) {
 
 func TestReconcileContinuesPastErrors(t *testing.T) {
 	ops := &fakeSchedules{failFor: "a"}
-	res, err := reconcile(context.Background(), ops, []string{"a", "b"}, []string{"a", "b"}, false)
+	res, err := reconcile(context.Background(), ops, own("a", "b"), []string{"a", "b"}, false)
 	if err == nil || !slices.Equal(res.Ensured, []string{"b"}) {
 		t.Fatalf("reconcile = %+v, %v; want b ensured and an error for a", res, err)
 	}
 	ops = &fakeSchedules{listError: errors.New("temporal down")}
-	if _, err := reconcile(context.Background(), ops, []string{"a"}, []string{"a"}, false); err == nil {
+	if _, err := reconcile(context.Background(), ops, own("a"), []string{"a"}, false); err == nil {
 		t.Fatal("list failure ignored")
 	}
 }
@@ -82,11 +87,31 @@ func TestReconcileMovesSchedulesOfProvidersThatChangedSite(t *testing.T) {
 	// "moved" was served by another site's worker and now belongs here; its
 	// schedule must be rewritten onto this site's task queue.
 	ops := &fakeSchedules{ids: []string{"sync-stay", "sync-moved"}, elsewhere: []string{"sync-moved"}}
-	res, err := reconcile(context.Background(), ops, []string{"stay", "moved"}, []string{"stay", "moved"}, false)
+	res, err := reconcile(context.Background(), ops, own("stay", "moved"), []string{"stay", "moved"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(res.Ensured, []string{"moved"}) || len(res.Removed) != 0 {
 		t.Fatalf("reconcile = %+v, want only the moved provider rewritten", res)
+	}
+}
+
+// own maps providers to the default site's queue.
+func own(providers ...string) map[string]string {
+	m := make(map[string]string, len(providers))
+	for _, p := range providers {
+		m[p] = TaskQueueForSite("default")
+	}
+	return m
+}
+
+func TestReconcileRoutesEachSiteToItsQueue(t *testing.T) {
+	ops := &fakeSchedules{}
+	ownership := map[string]string{"os-a": TaskQueueForSite("default"), "os-lab": TaskQueueForSite("lab")}
+	if _, err := reconcile(context.Background(), ops, ownership, []string{"os-a", "os-lab"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if ops.queues["os-a"] != "site-default" || ops.queues["os-lab"] != "site-lab" {
+		t.Fatalf("queues = %v", ops.queues)
 	}
 }

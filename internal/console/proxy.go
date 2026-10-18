@@ -26,6 +26,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/sulaimantok/semar/internal/driver/contract"
+	"github.com/sulaimantok/semar/internal/driver/httpx"
 )
 
 // Close codes sent to the browser (4000–4999 are application-defined).
@@ -78,9 +79,9 @@ func DialUpstream(ctx context.Context, t contract.ConsoleTarget) (*websocket.Con
 	}
 	c, resp, err := websocket.Dial(ctx, t.URL, &websocket.DialOptions{
 		HTTPClient: &http.Client{Transport: tr, Timeout: 30 * time.Second,
-			// The handshake carries provider credentials; never follow a
-			// redirect to another host.
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+			// The handshake carries provider credentials: redirects are
+			// followed only within the same origin.
+			CheckRedirect: httpx.SameOriginRedirects},
 		HTTPHeader:   t.Header,
 		Subprotocols: t.Subprotocols,
 	})

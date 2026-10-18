@@ -11,8 +11,12 @@ export function consoleProtocols(token: string): string[] {
   return ["binary", `semar.token.${token}`];
 }
 
-/** Human message for a console close code (see the API's console docs). */
-export function closeMessage(code: number): string {
+/**
+ * Human message for a console close code (see the API's console docs).
+ * The server's reason is shown for 4004, where it says what was missing.
+ */
+export function closeMessage(code: number, reason = ""): string {
+  if (code === 4004 && reason) return `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`;
   switch (code) {
     case 1000:
     case 1005:

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/sulaimantok/semar/internal/api/gen"
@@ -25,6 +26,9 @@ type SettingsStore interface {
 	CreateProject(ctx context.Context, p model.Project) (model.Project, error)
 	ListProjectMappings(ctx context.Context, projectID string) ([]model.ProjectMapping, error)
 	CreateProjectMapping(ctx context.Context, m model.ProjectMapping) (model.ProjectMapping, error)
+	GetProjectMapping(ctx context.Context, projectID string, id int64) (model.ProjectMapping, error)
+	UpdateProjectMapping(ctx context.Context, projectID string, id int64, providerID, externalScope string) (model.ProjectMapping, error)
+	DeleteProjectMapping(ctx context.Context, projectID string, id int64) error
 	ListProviders(ctx context.Context) ([]model.Provider, error)
 	GetProvider(ctx context.Context, id string) (model.Provider, error)
 	CreateProvider(ctx context.Context, p model.Provider) (model.Provider, error)
@@ -210,6 +214,67 @@ func (s *server) listProjectMappings(ctx context.Context, projectID string) ([]m
 		return nil, err
 	}
 	return st.ListProjectMappings(ctx, projectID)
+}
+
+func (s *server) UpdateProjectMapping(ctx context.Context, req gen.UpdateProjectMappingRequestObject) (gen.UpdateProjectMappingResponseObject, error) {
+	instance := "/api/v1/projects/" + req.ProjectId + "/mappings/" + strconv.FormatInt(req.MappingId, 10)
+	m, err := s.updateProjectMapping(ctx, req.ProjectId, req.MappingId, req.Body)
+	if err != nil {
+		code, p := s.problemFor(ctx, instance, err)
+		return gen.UpdateProjectMappingdefaultApplicationProblemPlusJSONResponse{StatusCode: code, Body: p}, nil
+	}
+	return gen.UpdateProjectMapping200JSONResponse(toProjectMapping(m)), nil
+}
+
+func (s *server) updateProjectMapping(ctx context.Context, projectID string, id int64, body *gen.ProjectMappingUpdate) (model.ProjectMapping, error) {
+	st, err := s.settings()
+	if err != nil {
+		return model.ProjectMapping{}, err
+	}
+	if body == nil || (body.ProviderId == nil && body.ExternalScope == nil) {
+		return model.ProjectMapping{}, badRequest("nothing to update")
+	}
+	m, err := st.GetProjectMapping(ctx, projectID, id)
+	if err != nil {
+		return model.ProjectMapping{}, err
+	}
+	if body.ProviderId != nil {
+		if _, err := st.GetProvider(ctx, *body.ProviderId); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return model.ProjectMapping{}, &apiError{status: http.StatusUnprocessableEntity, detail: "provider " + *body.ProviderId + " does not exist"}
+			}
+			return model.ProjectMapping{}, err
+		}
+		m.ProviderID = *body.ProviderId
+	}
+	if body.ExternalScope != nil {
+		m.ExternalScope = strings.TrimSpace(*body.ExternalScope)
+	}
+	var updated model.ProjectMapping
+	target := projectID + "/" + strconv.FormatInt(id, 10)
+	err = s.audited(ctx, "project_mapping.update", target, func() (err error) {
+		updated, err = st.UpdateProjectMapping(ctx, projectID, id, m.ProviderID, m.ExternalScope)
+		return err
+	})
+	if errors.Is(err, store.ErrConflict) {
+		return model.ProjectMapping{}, &apiError{status: http.StatusConflict, detail: "this scope is already mapped on the provider"}
+	}
+	return updated, err
+}
+
+func (s *server) DeleteProjectMapping(ctx context.Context, req gen.DeleteProjectMappingRequestObject) (gen.DeleteProjectMappingResponseObject, error) {
+	instance := "/api/v1/projects/" + req.ProjectId + "/mappings/" + strconv.FormatInt(req.MappingId, 10)
+	st, err := s.settings()
+	if err == nil {
+		err = s.audited(ctx, "project_mapping.delete", req.ProjectId+"/"+strconv.FormatInt(req.MappingId, 10), func() error {
+			return st.DeleteProjectMapping(ctx, req.ProjectId, req.MappingId)
+		})
+	}
+	if err != nil {
+		code, p := s.problemFor(ctx, instance, err)
+		return gen.DeleteProjectMappingdefaultApplicationProblemPlusJSONResponse{StatusCode: code, Body: p}, nil
+	}
+	return gen.DeleteProjectMapping204Response{}, nil
 }
 
 func (s *server) CreateProjectMapping(ctx context.Context, req gen.CreateProjectMappingRequestObject) (gen.CreateProjectMappingResponseObject, error) {

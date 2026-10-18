@@ -110,10 +110,16 @@ func server(i int) map[string]any {
 	default:
 		s["status"] = "VERIFY_RESIZE"
 	}
-	if i%2 == 0 {
+	switch {
+	case i%2 == 0:
 		s["image"] = map[string]any{"id": "img-arm"}
 		s["OS-EXT-SRV-ATTR:hypervisor_hostname"] = "cmp-arm"
-	} else {
+	case i == 5:
+		// Stopped and booted from a volume, with no host: arch only from
+		// the volume's image metadata.
+		s["image"] = ""
+		s["os-extended-volumes:volumes_attached"] = []map[string]any{{"id": "vol-boot"}}
+	default:
 		s["image"] = ""
 		s["OS-EXT-SRV-ATTR:hypervisor_hostname"] = "cmp-x86"
 	}
@@ -252,6 +258,8 @@ func (c *fakeCloud) serve(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"volumes": []map[string]any{
 			{"id": "vol-1", "name": "data", "size": 100, "os-vol-tenant-attr:tenant_id": "proj-1", "attachments": []map[string]any{{"server_id": "srv-00001"}}},
 			{"id": "vol-2", "name": "spare", "size": 10, "attachments": []map[string]any{}},
+			{"id": "vol-boot", "name": "root", "size": 20, "attachments": []map[string]any{{"server_id": "srv-00005"}},
+				"volume_image_metadata": map[string]string{"hw_architecture": "aarch64", "image_id": "img-gone"}},
 		}})
 	default:
 		c.t.Errorf("fake cloud: unexpected %s %s", r.Method, r.URL)
@@ -312,8 +320,11 @@ func TestInventoryMapping(t *testing.T) {
 	if err != nil || len(nets) != 1 || len(nets[0].CIDRs) != 2 {
 		t.Fatalf("networks = %+v, %v", nets, err)
 	}
+	if byID["srv-00005"].Arch != contract.ArchARM64 || byID["srv-00005"].HypervisorID != "" {
+		t.Fatalf("hostless volume-booted VM = %+v, want arm64 from volume_image_metadata", byID["srv-00005"])
+	}
 	vols, err := d.ListVolumes(ctx)
-	if err != nil || len(vols) != 2 || vols[0].AttachedTo != "srv-00001" || vols[0].SizeGiB != 100 || vols[0].ExternalScope != "proj-1" {
+	if err != nil || len(vols) != 3 || vols[0].AttachedTo != "srv-00001" || vols[0].SizeGiB != 100 || vols[0].ExternalScope != "proj-1" {
 		t.Fatalf("volumes = %+v, %v", vols, err)
 	}
 }
@@ -433,8 +444,10 @@ func TestErrorsAreClassified(t *testing.T) {
 	}
 	c.failCompute = 0
 	d := c.driver(t, func(cfg *Config) { cfg.Region = "Nowhere" })
-	if _, err := d.Validate(context.Background()); !errors.Is(err, contract.ErrNotFound) {
-		t.Fatalf("unknown region: %v", err)
+	_, err := d.Validate(context.Background())
+	if !errors.Is(err, contract.ErrNotFound) || !errors.Is(err, ErrNoEndpoint) ||
+		!strings.Contains(err.Error(), "RegionOne/public") || !strings.Contains(err.Error(), "RegionTwo/public") {
+		t.Fatalf("unknown region: %v (want the offered regions listed)", err)
 	}
 }
 
@@ -520,5 +533,16 @@ func TestSecurityGroups(t *testing.T) {
 		g.Rules[0] != (contract.SecurityGroupRule{Direction: "ingress", Protocol: "tcp", PortMin: 443, PortMax: 443, Remote: "0.0.0.0/0", EtherType: "IPv4"}) ||
 		g.Rules[1].Remote != "group:sg-1" || g.Rules[2].Protocol != "" {
 		t.Fatalf("security group = %+v", g)
+	}
+}
+
+func TestDisabledConsoleTypeIsUnsupported(t *testing.T) {
+	c := newFakeCloud(t)
+	c.consoleHook = func(*http.Request) (int, any) {
+		return 400, map[string]any{"badRequest": map[string]any{"message": "Unavailable console type serial.", "code": 400}}
+	}
+	_, err := c.driver(t).OpenConsole(context.Background(), "srv-00000", contract.ConsoleSerial)
+	if !errors.Is(err, contract.ErrConsoleUnsupported) {
+		t.Fatalf("disabled serial proxy: %v, want ErrConsoleUnsupported", err)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -83,6 +84,10 @@ const (
 	placementConcurrency = 8
 	tokenSlack           = 5 * time.Minute
 )
+
+// ErrNoEndpoint is returned when the catalog has no endpoint for the
+// configured region and interface; the message lists what it has.
+var ErrNoEndpoint = errors.New("no matching catalog endpoint")
 
 // Driver is safe for concurrent use. It caches the Keystone token and the
 // discovered API versions.
@@ -199,11 +204,19 @@ func (d *Driver) authenticate(ctx context.Context) (*token, error) {
 		return nil, fmt.Errorf("keystone: %w", err)
 	}
 	t := &token{value: h.Get("X-Subject-Token"), expires: out.Token.ExpiresAt, endpoints: map[string]string{}}
+	var computeOffers []string // "<region>/<interface>" of every compute endpoint, for diagnostics
 	if t.value == "" {
 		return nil, fmt.Errorf("keystone: no X-Subject-Token in response: %w", contract.ErrUnavailable)
 	}
 	for _, svc := range out.Token.Catalog {
 		for _, e := range svc.Endpoints {
+			if svc.Type == "compute" {
+				region := e.RegionID
+				if region == "" {
+					region = e.Region
+				}
+				computeOffers = append(computeOffers, region+"/"+e.Interface)
+			}
 			if e.Interface != d.cfg.Interface || (d.cfg.Region != "" && e.RegionID != d.cfg.Region && e.Region != d.cfg.Region) {
 				continue
 			}
@@ -217,8 +230,9 @@ func (d *Driver) authenticate(ctx context.Context) (*token, error) {
 		}
 	}
 	if t.endpoints["compute"] == "" {
-		return nil, fmt.Errorf("keystone: no %s compute endpoint for region %q in the catalog: %w",
-			d.cfg.Interface, d.cfg.Region, contract.ErrNotFound)
+		sort.Strings(computeOffers)
+		return nil, fmt.Errorf("keystone: no %s compute endpoint for region %q in the catalog (compute endpoints: %s): %w: %w",
+			d.cfg.Interface, d.cfg.Region, strings.Join(computeOffers, ", "), ErrNoEndpoint, contract.ErrNotFound)
 	}
 	return t, nil
 }

@@ -2,6 +2,7 @@ package openstack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sulaimantok/semar/internal/driver/contract"
+	"github.com/sulaimantok/semar/internal/driver/httpx"
 )
 
 var _ contract.ConsoleOpener = (*Driver)(nil)
@@ -41,6 +43,12 @@ func (d *Driver) OpenConsole(ctx context.Context, vmID string, kind contract.Con
 	}
 	path := "/servers/" + url.PathEscape(vmID) + "/remote-consoles"
 	if err := d.send(ctx, http.MethodPost, "compute", path, computeHeader(minVersion(v.compute, maxComputeServers)), body, &out); err != nil {
+		// Nova answers 400 "Unavailable console type <type>." when that
+		// console proxy is not enabled (serial is off by default).
+		var se *httpx.StatusError
+		if errors.As(err, &se) && se.Status == http.StatusBadRequest && strings.Contains(se.Message, "Unavailable console type") {
+			return contract.ConsoleTarget{}, fmt.Errorf("remote console: %w: %w", contract.ErrConsoleUnsupported, err)
+		}
 		return contract.ConsoleTarget{}, fmt.Errorf("remote console: %w", err)
 	}
 	ws, origin, err := consoleWebSocket(out.RemoteConsole.URL, kind)

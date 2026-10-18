@@ -62,6 +62,8 @@ var operationAccess = map[string]access{
 	"CreateSite":           accessAdmin,
 	"CreateProject":        accessAdmin,
 	"CreateProjectMapping": accessAdmin,
+	"UpdateProjectMapping": accessAdmin,
+	"DeleteProjectMapping": accessAdmin,
 	"CreateProvider":       accessAdmin,
 	"DeleteProvider":       accessAdmin,
 	"UpdateProvider":       accessAdmin,

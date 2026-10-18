@@ -32,7 +32,7 @@ func TestLoadWorkerDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.TemporalAddress != "localhost:7233" || cfg.TemporalNamespace != "semar" || cfg.SiteID != "default" ||
+	if cfg.TemporalAddress != "localhost:7233" || cfg.TemporalNamespace != "semar" || len(cfg.SiteIDs) != 1 || cfg.SiteIDs[0] != "default" ||
 		cfg.SyncInterval != time.Minute || cfg.PayloadKeyID != "k1" || len(cfg.PayloadKeys["k1"]) != 32 ||
 		cfg.DatabaseURL != testDBURL || cfg.OrphanAfter != 3 || cfg.ReconcileInterval != time.Minute {
 		t.Fatalf("unexpected defaults: %+v", cfg)
@@ -90,5 +90,17 @@ func TestLoadWorkerCredentialKEK(t *testing.T) {
 	}
 	if _, err := LoadWorker(workerEnv(map[string]string{"SEMAR_KEK": "short"})); err == nil {
 		t.Fatal("invalid SEMAR_KEK accepted")
+	}
+}
+
+func TestLoadWorkerSeveralSites(t *testing.T) {
+	cfg, err := LoadWorker(workerEnv(map[string]string{"SEMAR_SITE_ID": "default, lab,lab"}))
+	if err != nil || len(cfg.SiteIDs) != 2 || cfg.SiteIDs[1] != "lab" {
+		t.Fatalf("SiteIDs = %v, %v", cfg.SiteIDs, err)
+	}
+	for _, bad := range []string{"Lab", " , ", "a b"} {
+		if _, err := LoadWorker(workerEnv(map[string]string{"SEMAR_SITE_ID": bad})); err == nil {
+			t.Errorf("SEMAR_SITE_ID=%q accepted", bad)
+		}
 	}
 }

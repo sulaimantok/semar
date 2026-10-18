@@ -209,6 +209,45 @@ paths:
                 $ref: "#/components/schemas/ProjectMapping"
         default:
           $ref: "#/components/responses/Problem"
+  /api/v1/projects/{projectId}/mappings/{mappingId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - name: mappingId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    patch:
+      tags: [settings]
+      summary: Change a mapping's provider or external scope
+      description: Ownership of resources follows on the next sync of the affected providers.
+      operationId: updateProjectMapping
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectMappingUpdate"
+      responses:
+        "200":
+          description: The updated mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectMapping"
+        default:
+          $ref: "#/components/responses/Problem"
+    delete:
+      tags: [settings]
+      summary: Remove a mapping
+      description: Resources it assigned become unassigned (or follow another rule) on the next sync.
+      operationId: deleteProjectMapping
+      responses:
+        "204":
+          description: Removed
+        default:
+          $ref: "#/components/responses/Problem"
   /api/v1/providers:
     get:
       tags: [settings]
@@ -954,6 +993,15 @@ components:
     ProjectMappingCreate:
       type: object
       required: [providerId, externalScope]
+      properties:
+        providerId:
+          $ref: "#/components/schemas/EntityId"
+        externalScope:
+          type: string
+          minLength: 1
+    ProjectMappingUpdate:
+      type: object
+      minProperties: 1
       properties:
         providerId:
           $ref: "#/components/schemas/EntityId"

@@ -155,7 +155,7 @@ A lost local password is reset with `semar-api reset-password <username>` (new p
 |---|---|---|
 | `SEMAR_TEMPORAL_ADDRESS` | `localhost:7233` | Temporal frontend |
 | `SEMAR_TEMPORAL_NAMESPACE` | `semar` | Temporal namespace |
-| `SEMAR_SITE_ID` | `default` | Site served by this worker (task queue `site-<id>`) |
+| `SEMAR_SITE_ID` | `default` | Site(s) served by this worker, comma separated (task queue `site-<id>` each). Providers without a site belong to `default`; a provider whose site no worker serves is never synced |
 | `SEMAR_SYNC_INTERVAL` | `60s` | Inventory sync interval per provider |
 | `SEMAR_PAYLOAD_KEY_ID` | `k1` | ID of the current payload key |
 | `SEMAR_PAYLOAD_KEY` | — (required) | 32-byte AES key, base64 (`openssl rand -base64 32`) |
@@ -168,7 +168,7 @@ A lost local password is reset with `semar-api reset-password <username>` (new p
 
 ### Inventory sync
 
-The worker serves one site (`SEMAR_SITE_ID`; providers without a site belong to `default`). Every `SEMAR_SCHEDULE_RECONCILE_INTERVAL` it creates a Temporal Schedule for each active provider of its site and deletes schedules of removed providers. Each sync lists the provider's full inventory and applies it in one transaction:
+A worker serves the sites in `SEMAR_SITE_ID` (one per site is the norm; Lite and small labs can list several, e.g. `default,lab`). Providers without a site belong to `default`. Every `SEMAR_SCHEDULE_RECONCILE_INTERVAL` it creates a Temporal Schedule on the site's task queue for each active provider of its sites and deletes schedules of removed providers. Each sync lists the provider's full inventory and applies it in one transaction:
 
 - snapshots older than the last applied one are discarded;
 - resources leased by an in-flight operation are left untouched;

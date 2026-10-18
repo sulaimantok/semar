@@ -5,9 +5,9 @@ import { useIsAdmin } from "@/modules/auth";
 import { ApiErrorAlert } from "../../components/api-error-alert";
 import { FormField } from "../../components/form-field";
 import { ENTITY_ID_HINT, ENTITY_ID_PATTERN, SCOPE_HINT } from "../../constants/settings";
-import { useCreateMapping, useCreateProject } from "../../hooks/use-settings-mutations";
+import { useCreateMapping, useCreateProject, useDeleteMapping, useUpdateMapping } from "../../hooks/use-settings-mutations";
 import { useMappings, useProjects, useSettingsProviders } from "../../hooks/use-settings-queries";
-import type { IProject, IProvider } from "../../services/settings-service";
+import type { IProject, IProjectMapping, IProjectMappingUpdate, IProvider } from "../../services/settings-service";
 
 import { projectsStyles as styles } from "./projects.styles";
 
@@ -66,17 +66,103 @@ function ProjectCard({ project, providers, isAdmin }: { project: IProject; provi
       ) : (
         <ul className={styles.mappingList} aria-label={`Mappings of ${project.name}`}>
           {rows.map((m) => (
-            <li key={m.id} className={styles.mapping}>
-              <span>{providerName.get(m.providerId) ?? m.providerId}</span>
-              <span className={styles.arrow} aria-hidden="true">
-                →
-              </span>
-              <span className={styles.mono}>{m.externalScope}</span>
-            </li>
+            <MappingRow key={m.id} mapping={m} providers={providers} providerName={providerName} isAdmin={isAdmin} />
           ))}
         </ul>
       )}
       {isAdmin && providers.length > 0 && <AddMappingForm projectId={project.id} providers={providers} />}
+    </li>
+  );
+}
+
+function MappingRow({
+  mapping: m,
+  providers,
+  providerName,
+  isAdmin,
+}: {
+  mapping: IProjectMapping;
+  providers: IProvider[];
+  providerName: Map<string, string>;
+  isAdmin: boolean;
+}) {
+  const [mode, setMode] = useState<"view" | "edit" | "confirm">("view");
+  const [providerId, setProviderId] = useState(m.providerId);
+  const [scope, setScope] = useState(m.externalScope);
+  const update = useUpdateMapping(m.projectId);
+  const remove = useDeleteMapping(m.projectId);
+  const label = `${providerName.get(m.providerId) ?? m.providerId} → ${m.externalScope}`;
+
+  if (mode === "edit") {
+    const provider = providers.find((p) => p.id === providerId);
+    const body: IProjectMappingUpdate = {};
+    if (providerId !== m.providerId) body.providerId = providerId;
+    if (scope.trim() !== m.externalScope) body.externalScope = scope;
+    return (
+      <li className={styles.mappingEdit}>
+        <form
+          className={styles.inlineForm}
+          aria-label={`Edit mapping ${label}`}
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault();
+            update.mutate({ id: m.id, body }, { onSuccess: () => setMode("view") });
+          }}
+        >
+          <ApiErrorAlert error={update.error} />
+          <FormField label="Provider">
+            <select className={styles.input} value={providerId} onChange={(e) => setProviderId(e.target.value)}>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="External scope" hint={provider ? SCOPE_HINT[provider.type] : undefined}>
+            <input className={styles.input} required value={scope} onChange={(e) => setScope(e.target.value)} />
+          </FormField>
+          <div className={styles.rowActions}>
+            <button type="submit" className={styles.secondary} disabled={update.isPending || Object.keys(body).length === 0}>
+              Save
+            </button>
+            <button type="button" className={styles.secondary} onClick={() => setMode("view")}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      </li>
+    );
+  }
+
+  return (
+    <li className={styles.mapping}>
+      <span>{providerName.get(m.providerId) ?? m.providerId}</span>
+      <span className={styles.arrow} aria-hidden="true">
+        →
+      </span>
+      <span className={styles.mono}>{m.externalScope}</span>
+      {isAdmin && mode === "view" && (
+        <span className={styles.rowActions}>
+          <button type="button" className={styles.linkButton} onClick={() => setMode("edit")} aria-label={`Edit mapping ${label}`}>
+            Edit
+          </button>
+          <button type="button" className={styles.linkDanger} onClick={() => setMode("confirm")} aria-label={`Remove mapping ${label}`}>
+            Remove
+          </button>
+        </span>
+      )}
+      {isAdmin && mode === "confirm" && (
+        <span className={styles.rowActions}>
+          <span className={styles.muted}>Resources it assigned become unassigned on the next sync.</span>
+          <button type="button" className={styles.danger} disabled={remove.isPending} onClick={() => remove.mutate(m.id)}>
+            Confirm remove
+          </button>
+          <button type="button" className={styles.secondary} onClick={() => setMode("view")}>
+            Cancel
+          </button>
+        </span>
+      )}
+      <ApiErrorAlert error={remove.error} />
     </li>
   );
 }
