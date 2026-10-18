@@ -41,6 +41,11 @@ type Store interface {
 // ErrUnknownKEK is returned for secrets sealed with a KEK the keyring lacks.
 var ErrUnknownKEK = errors.New("secret: unknown KEK version")
 
+// ErrDecrypt is returned when a sealed secret does not open: the KEK of
+// its version is not the one it was sealed with (a wrong SEMAR_KEK after a
+// restore, for example) or the data was modified.
+var ErrDecrypt = errors.New("secret: cannot decrypt (wrong key or modified data)")
+
 // AAD builds the additional authenticated data that binds a secret to its
 // table, row and purpose.
 func AAD(table, rowID, purpose string) []byte {
@@ -111,7 +116,7 @@ func (k *Keyring) Open(s Sealed, aad []byte) ([]byte, error) {
 	}
 	plaintext, err := open(dekAEAD, s.Ciphertext, aad)
 	if err != nil {
-		return nil, fmt.Errorf("secret: decrypt data: %w", err)
+		return nil, fmt.Errorf("%w: decrypt data: %w", ErrDecrypt, err)
 	}
 	return plaintext, nil
 }
@@ -139,7 +144,7 @@ func (k *Keyring) unwrap(s Sealed, aad []byte) ([]byte, error) {
 	}
 	dek, err := open(kek, s.WrappedDEK, wrapAAD(s.KEKVersion, aad))
 	if err != nil {
-		return nil, fmt.Errorf("secret: unwrap DEK: %w", err)
+		return nil, fmt.Errorf("%w: unwrap DEK: %w", ErrDecrypt, err)
 	}
 	return dek, nil
 }

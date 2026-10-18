@@ -31,6 +31,10 @@ var ErrNotImplemented = errors.New("driver not implemented")
 // contract.ErrUnauthorized.
 var ErrNoCredential = errors.New("no usable discovery credential")
 
+// ErrCredentialUnreadable is returned when a stored credential cannot be
+// decrypted with the configured keys (SEMAR_KEK, SEMAR_KEK_PREVIOUS).
+var ErrCredentialUnreadable = errors.New("stored credential cannot be decrypted with the configured KEK")
+
 // CredentialOpener decrypts stored provider credentials; *store.Store
 // implements it.
 type CredentialOpener interface {
@@ -109,6 +113,9 @@ func (r *Resolver) driverWith(ctx context.Context, p model.Provider, purpose mod
 	cred, plaintext, err := r.Credentials.OpenCredential(ctx, r.Secrets, p.ID, purpose, scope)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, fmt.Errorf("%w: no %s credential for %s stored for provider %s: %w", ErrNoCredential, purpose, scope, p.ID, contract.ErrUnauthorized)
+	}
+	if errors.Is(err, secret.ErrDecrypt) || errors.Is(err, secret.ErrUnknownKEK) {
+		return nil, fmt.Errorf("%w (provider %s, %s %s): %w", ErrCredentialUnreadable, p.ID, purpose, scope, err)
 	}
 	if err != nil {
 		return nil, err

@@ -139,3 +139,18 @@ func TestNewKeyringValidates(t *testing.T) {
 		}
 	}
 }
+
+func TestWrongKEKIsErrDecrypt(t *testing.T) {
+	a, _ := NewKeyring("k1", map[string][]byte{"k1": bytes.Repeat([]byte{1}, 32)})
+	b, _ := NewKeyring("k1", map[string][]byte{"k1": bytes.Repeat([]byte{2}, 32)})
+	sealed, err := a.Seal([]byte("secret"), []byte("aad"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Open(sealed, []byte("aad")); !errors.Is(err, ErrDecrypt) {
+		t.Fatalf("wrong KEK: %v, want ErrDecrypt", err)
+	}
+	if _, err := a.Open(sealed, []byte("other row")); !errors.Is(err, ErrDecrypt) {
+		t.Fatalf("wrong AAD: %v, want ErrDecrypt", err)
+	}
+}

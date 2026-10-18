@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -154,4 +155,14 @@ type purposeOpener func(purpose model.CredentialPurpose, scope string) (model.Pr
 
 func (f purposeOpener) OpenCredential(_ context.Context, _ secret.Store, _ string, purpose model.CredentialPurpose, scope string) (model.ProviderCredential, []byte, error) {
 	return f(purpose, scope)
+}
+
+func TestUnreadableCredential(t *testing.T) {
+	r := &Resolver{Secrets: noSecrets{}, Credentials: purposeOpener(func(model.CredentialPurpose, string) (model.ProviderCredential, []byte, error) {
+		return model.ProviderCredential{}, nil, fmt.Errorf("open credential x: %w", secret.ErrDecrypt)
+	})}
+	_, err := r.Driver(context.Background(), model.Provider{ID: "pve", Type: contract.ProviderProxmox, Endpoints: []string{"https://pve.example.com:8006"}})
+	if !errors.Is(err, ErrCredentialUnreadable) || errors.Is(err, ErrNoCredential) {
+		t.Fatalf("decrypt failure: %v", err)
+	}
 }

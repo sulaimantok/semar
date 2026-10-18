@@ -19,6 +19,7 @@ import (
 	"github.com/sulaimantok/semar/internal/auth"
 	"github.com/sulaimantok/semar/internal/console"
 	"github.com/sulaimantok/semar/internal/driver/contract"
+	"github.com/sulaimantok/semar/internal/driver/registry"
 	"github.com/sulaimantok/semar/internal/model"
 	"github.com/sulaimantok/semar/internal/store"
 )
@@ -300,6 +301,8 @@ func consoleErrorClass(err error) string {
 		return "unauthorized"
 	case errors.Is(err, contract.ErrNotFound):
 		return "not_found"
+	case errors.Is(err, registry.ErrCredentialUnreadable):
+		return "credential_unreadable"
 	case errors.Is(err, console.ErrRFBAuth):
 		return "vnc_auth_rejected"
 	case errors.Is(err, contract.ErrUnavailable), errors.Is(err, context.DeadlineExceeded):

@@ -171,6 +171,11 @@ func (a *Activities) CollectInventory(ctx context.Context, in SyncInput) (s Inve
 			activity.GetLogger(ctx).Warn("no discovery credential; sync skipped", "provider", in.ProviderID)
 			a.recordFailure(ctx, in.ProviderID, err)
 			return InventorySummary{ProviderID: in.ProviderID, Skipped: true}, nil
+		case errors.Is(err, registry.ErrCredentialUnreadable):
+			// A wrong or missing KEK on this worker: retrying cannot help;
+			// the sync status says why.
+			a.recordFailure(ctx, in.ProviderID, err)
+			return InventorySummary{}, temporal.NewNonRetryableApplicationError(err.Error(), errTypeProviderNonRetryable, err)
 		case errors.Is(err, contract.ErrUnauthorized):
 			// A stored credential that cannot be used (malformed for this
 			// provider type): retrying cannot help.
