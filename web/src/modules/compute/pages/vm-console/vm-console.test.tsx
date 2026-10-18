@@ -1,4 +1,4 @@
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { json, problem, renderRoutes, stubApi } from "@/shared/test/render";
@@ -11,7 +11,9 @@ const vncMounts = vi.hoisted(() => ({ count: 0 }));
 vi.mock("./components/vnc-screen", async () => {
   const { useEffect } = await import("react");
   return {
-    VncScreen: () => {
+    VncScreen: ({ socket }: { socket: WebSocket }) => {
+      // Like noVNC: a closed socket is an error.
+      if (socket.readyState === 3) throw new Error("Cannot use already closed WebSocket/RTCDataChannel");
       useEffect(() => {
         vncMounts.count++;
       }, []);
@@ -32,7 +34,9 @@ class FakeSocket extends EventTarget {
     super();
     FakeSocket.last = this;
   }
-  close() {}
+  close() {
+    this.readyState = 3;
+  }
   send() {}
 }
 
@@ -91,5 +95,30 @@ describe("VmConsolePage", () => {
     render("vnc", () => problem(403, "Forbidden", "consoles require an Admin or Operator role for this VM"));
     expect(await screen.findByText(/require an Admin or Operator role/)).toBeTruthy();
     expect(FakeSocket.last).toBeUndefined();
+  });
+
+  it("switches from serial to VNC with a fresh connection", async () => {
+    const kinds: string[] = [];
+    stubApi({
+      "GET /api/v1/resources/pve-lab/vm/100": () => json(200, vm),
+      "POST /api/v1/resources/pve-lab/vm/100/console": async (req) => {
+        const { kind } = (await req.json()) as { kind: string };
+        kinds.push(kind);
+        return json(201, { token: `t-${kind}`, kind, expiresAt: new Date().toISOString(), websocketPath: "/api/v1/console/ws" });
+      },
+    });
+    renderRoutes([{ path: "/compute/vms/:providerId/:externalId/console/:kind", element: <VmConsolePage /> }], "/compute/vms/pve-lab/100/console/serial");
+    expect(await screen.findByText("serial terminal")).toBeTruthy();
+    const serialSocket = FakeSocket.last!;
+    // The provider has no serial console: the server closes with 4004.
+    serialSocket.readyState = 3;
+    serialSocket.dispatchEvent(Object.assign(new Event("close"), { code: 4004, reason: "this console kind is not available for the VM" }));
+    expect(await screen.findByText("This console kind is not available for the VM.")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("link", { name: "VNC" }));
+    expect(await screen.findByText("vnc screen")).toBeTruthy();
+    expect(FakeSocket.last).not.toBe(serialSocket);
+    expect(FakeSocket.last!.protocols).toEqual(["binary", "semar.token.t-vnc"]);
+    expect(kinds).toEqual(["serial", "vnc"]);
   });
 });

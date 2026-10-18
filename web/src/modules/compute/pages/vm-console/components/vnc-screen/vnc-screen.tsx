@@ -22,7 +22,8 @@ export const VncScreen = forwardRef<IVncScreenHandle, IVncScreenProps>(function 
   useImperativeHandle(ref, () => ({ sendCtrlAltDel: () => rfb.current?.sendCtrlAltDel() }), []);
 
   useEffect(() => {
-    if (!host.current) return;
+    // noVNC throws on a closed socket; the page reconnects instead.
+    if (!host.current || socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) return;
     const client = new RFB(host.current, socket);
     client.scaleViewport = true;
     client.background = "#000";

@@ -30,10 +30,18 @@ function tokenError(err: unknown): string {
  * VNC (noVNC) or serial (xterm.js) console of one VM. The page asks the
  * API for a single-use token and connects to SEMAR's console proxy; the
  * provider's URL and ticket never reach the browser.
+ *
+ * Switching between VNC and serial keeps the route, so the session is
+ * keyed by kind: it remounts with fresh state instead of handing the
+ * previous (closed) socket to the other viewer.
  */
 export function VmConsolePage() {
   const { providerId = "", externalId = "", kind: kindParam = "vnc" } = useParams();
   const kind: IConsoleKind = kindParam === "serial" ? "serial" : "vnc";
+  return <ConsoleSession key={`${providerId}/${externalId}/${kind}`} providerId={providerId} externalId={externalId} kind={kind} />;
+}
+
+function ConsoleSession({ providerId, externalId, kind }: { providerId: string; externalId: string; kind: IConsoleKind }) {
   const vm = useVm(providerId, externalId);
   const session = useConsoleSession(providerId, externalId);
   const [socket, setSocket] = useState<WebSocket | null>(null);
