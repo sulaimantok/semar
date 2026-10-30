@@ -8,7 +8,7 @@
 
 | Phase | Scope | State |
 |---|---|---|
-| 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment and spikes S1–S3 |
+| 0 — Foundation | ADRs, CI, driver contract + Fake Driver, Temporal Lite profile (spike S4), web scaffold | Done, except the lab environment; spikes S1–S3 written, lab runs pending |
 | 1 — MVP | Unified read-only inventory and console across OpenStack and Proxmox | Feature-complete; verification against OpenStack and Proxmox labs pending. Done: PostgreSQL store, Settings API and UI, local auth + RBAC + hash-chained audit log (streamed to a webhook), write-only credentials with KEK rotation, inventory sync with orphan detection and history, project mappings (scope, tag and name rules), read-only OpenStack and Proxmox drivers, capacity overview, global Site/Project filter, VM list and detail, VNC and serial consoles, provider update and connection checks, metrics, runbooks, [security review](docs/security/v0.1.0-review.md). Next: lab verification, then `v0.1.0` |
 | 2 and later | VM day-2 operations, OIDC, observability, Kubernetes lifecycle (Cluster API) | Not started |
 
@@ -30,7 +30,7 @@
 | Web UI | `web/` | React + Vite + TypeScript + Tailwind; sign-in, global Site/Project filter, Overview (API status, capacity), Compute (VM list and detail), Settings (providers, sites, projects, mappings, credentials); module-based layout, API types generated from the spec (see `web/README.md`) |
 | Store | `internal/store`, `internal/model`, `internal/secret` | PostgreSQL (pgx) with embedded goose migrations: sites, projects, providers, project mappings, users, sessions, role bindings, append-only hash-chained audit log, inventory cache with change history and sync status; credentials sealed with envelope encryption (ADR-0004) |
 | Lite profile | `deploy/compose/` | PostgreSQL + Temporal + UI + SEMAR (development only) |
-| ADRs & spikes | `docs/adr/`, `docs/spikes/` | ADR-0001 … ADR-0007, spike S4 |
+| ADRs & spikes | `docs/adr/`, `docs/spikes/` | ADR-0001 … ADR-0007, spikes S1–S4 |
 | Runbooks | `docs/runbooks/` | Database roles, key rotation, break-glass, backup and restore |
 | Console proxy | `internal/console`, `internal/api/console.go` | WebSocket bridge to provider consoles: RFB auth relay, Proxmox termproxy framing, limits, audit |
 | Audit streaming | `internal/auditsink` | Signed, ordered, at-least-once delivery of the audit log to a webhook |
